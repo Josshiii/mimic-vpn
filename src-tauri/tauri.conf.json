@@ -13,8 +13,12 @@
     "windows": [
       {
         "title": "Mimic Link",
-        "width": 800,
-        "height": 600
+        "width": 460,        
+        "height": 650,       
+        "resizable": false,  
+        "maximizable": false,
+        "fullscreen": false,
+        "center": true       
       }
     ],
     "security": {
@@ -35,3 +39,4 @@
     ]
   }
 }
+
