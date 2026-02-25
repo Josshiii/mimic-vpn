@@ -1,4 +1,5 @@
-// Accedemos al núcleo de Tauri
+// Acceso al núcleo de Tauri
+// NOTA: Si window.__TAURI__ falla, asegúrate de que tauri.conf.json tenga "withGlobalTauri": true
 const invoke = window.__TAURI__.core.invoke;
 const listen = window.__TAURI__.event.listen;
 
@@ -7,23 +8,20 @@ async function conectar() {
   const puertoInput = document.querySelector("#puerto-local");
   const status = document.querySelector("#status");
   
-  // 1. Feedback visual inmediato
   status.textContent = "Intentando conectar...";
   status.style.color = "yellow";
 
   try {
-    // 2. Llamada a Rust (Usamos los nombres EXACTOS de Rust: snake_case)
+    // CORRECCIÓN AQUÍ: Tauri convierte automáticamente snake_case a camelCase
     const respuesta = await invoke("conectar_tunel", { 
-      ip_destino: ipInput.value, 
-      puerto_local: puertoInput.value 
+      ipDestino: ipInput.value,     // Rust espera ip_destino, pero aquí se llama ipDestino
+      puertoLocal: puertoInput.value // Rust espera puerto_local, pero aquí se llama puertoLocal
     });
     
-    // 3. Éxito
     status.textContent = respuesta;
-    status.style.color = "#00ff00"; // Verde Hacker
+    status.style.color = "#00ff00"; // Verde Éxito
 
   } catch (error) {
-    // 4. Error
     console.error(error);
     status.textContent = "FALLO: " + error;
     status.style.color = "red";
@@ -35,25 +33,25 @@ async function iniciarLuces() {
   const ledTx = document.querySelector("#led-tx");
   const ledRx = document.querySelector("#led-rx");
 
-  // Escuchamos eventos desde Rust
-  await listen('trafico-salida', (event) => {
-    ledTx.style.backgroundColor = "#00ff00"; 
-    setTimeout(() => ledTx.style.backgroundColor = "#333", 50);
-  });
+  try {
+      await listen('trafico-salida', (event) => {
+        ledTx.style.backgroundColor = "#00ff00"; 
+        setTimeout(() => ledTx.style.backgroundColor = "#333", 50);
+      });
 
-  await listen('trafico-entrada', (event) => {
-    ledRx.style.backgroundColor = "#0055ff"; 
-    setTimeout(() => ledRx.style.backgroundColor = "#333", 50);
-  });
+      await listen('trafico-entrada', (event) => {
+        ledRx.style.backgroundColor = "#0055ff"; 
+        setTimeout(() => ledRx.style.backgroundColor = "#333", 50);
+      });
+  } catch (e) {
+      console.log("Sistema de luces no disponible aún: " + e);
+  }
 }
 
-// Inicialización
 window.addEventListener("DOMContentLoaded", () => {
   const btn = document.querySelector("#btn-conectar");
   if(btn) {
       btn.addEventListener("click", conectar);
       iniciarLuces();
-  } else {
-      console.error("No encontré el botón de conectar");
   }
 });
