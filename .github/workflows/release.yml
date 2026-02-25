@@ -21,48 +21,50 @@ jobs:
       - name: Install dependencies (Frontend)
         run: npm install
 
-      # --- EL SABUESO (BÚSQUEDA IMPLACABLE) ---
-      # Este paso busca el archivo 'icon.ico' en TODO el repositorio
-      # y lo mueve a la fuerza a src-tauri/icons/
-      - name: BUSQUEDA IMPLACABLE DE ICONOS
-        shell: powershell
+      # --- EL SABUESO (VERSIÓN POWERSHELL CORREGIDA) ---
+      # Busca icon.ico donde sea y lo pone en su sitio.
+      - name: BUSQUEDA Y ARREGLO DE ICONOS
         run: |
-          echo "--- INICIANDO RASTREO DE ICON.ICO ---"
-          $icon = Get-ChildItem -Path . -Recurse -Filter icon.ico -ErrorAction SilentlyContinue | Select-Object -First 1
+          Write-Host "--- INICIANDO RASTREO DE ICON.ICO ---"
+          # Buscar el archivo en todo el proyecto
+          $icon = Get-ChildItem -Path . -Recurse -Filter "icon.ico" -ErrorAction SilentlyContinue | Select-Object -First 1
           
           if ($icon) {
-            echo "✅ ICONO ENCONTRADO EN: $($icon.FullName)"
+            Write-Host "✅ ICONO ENCONTRADO EN: $($icon.FullName)"
             
-            # Crear la carpeta destino si no existe
+            # 1. Crear la carpeta destino (src-tauri/icons) si no existe
             $destPath = "src-tauri\icons"
             if (-not (Test-Path $destPath)) {
-                echo "Creando carpeta src-tauri/icons..."
+                Write-Host "Creando carpeta src-tauri/icons..."
                 New-Item -ItemType Directory -Force -Path $destPath
             }
 
-            # Copiar el icono y sus amigos png
-            echo "Copiando archivos a su lugar correcto..."
+            # 2. Copiar el icono a la fuerza
+            Write-Host "Copiando archivo a $destPath\icon.ico ..."
             Copy-Item -Path $icon.FullName -Destination "$destPath\icon.ico" -Force
             
-            # Intentar copiar los PNGs que estén junto al icono
+            # 3. Copiar también los PNGs si están en la misma carpeta que el icono
+            Write-Host "Buscando PNGs amigos..."
             Copy-Item -Path "$($icon.Directory)\*.png" -Destination $destPath -Force
             
-            echo "✨ ARREGLADO: Los iconos están ahora en src-tauri/icons"
+            Write-Host "✨ ARREGLADO: Iconos listos."
           } else {
-            echo "❌ ERROR FATAL: El archivo icon.ico NO EXISTE en ninguna parte de este repositorio."
-            echo "Por favor, sube el archivo icon.ico a GitHub."
+            Write-Error "❌ ERROR FATAL: No existe el archivo icon.ico en ningún lugar del repositorio."
             exit 1
           }
 
       # PASO DEL DRIVER (Wintun)
       - name: Setup Wintun Driver
-        shell: powershell
         run: |
           New-Item -ItemType Directory -Force -Path src-tauri\target\debug
-          if (Test-Path wintun.dll) {
-            Copy-Item -Path wintun.dll -Destination src-tauri\target\debug\wintun.dll
+          # Buscar wintun.dll donde sea
+          $dll = Get-ChildItem -Path . -Recurse -Filter "wintun.dll" | Select-Object -First 1
+          
+          if ($dll) {
+             Copy-Item -Path $dll.FullName -Destination src-tauri\target\debug\wintun.dll -Force
+             Write-Host "✅ Driver Wintun colocado."
           } else {
-            echo "ADVERTENCIA: No encuentro wintun.dll en la raíz."
+             Write-Warning "⚠️ ADVERTENCIA: No encuentro wintun.dll. La compilación podría fallar."
           }
 
       - name: Build App
