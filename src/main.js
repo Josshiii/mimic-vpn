@@ -99,3 +99,48 @@ window.addEventListener("DOMContentLoaded", () => {
       iniciarLuces();
   }
 });
+
+// ... código anterior ...
+
+// NUEVA FUNCIÓN: Activar UPnP
+async function abrirPuertos() {
+  const btn = document.querySelector("#btn-upnp");
+  const inputPublica = document.querySelector("#ip-publica");
+  const puerto = document.querySelector("#puerto-local").value;
+
+  btn.textContent = "Negociando...";
+  btn.disabled = true;
+
+  try {
+    // Llamamos a Rust para que hable con el router
+    // Convertimos el puerto a número entero (parseInt)
+    const ipPublica = await invoke("activar_upnp", { puertoLocal: parseInt(puerto) });
+    
+    if (ipPublica.includes("Fallo") || ipPublica.includes("No se encontró")) {
+       inputPublica.value = "Error UPnP";
+       btn.textContent = "Fallo Manual";
+       btn.style.backgroundColor = "#ed4245";
+       alert("Tu router no soporta UPnP o está desactivado. Tendrás que usar Radmin o abrir puertos manualmente.\n\nError: " + ipPublica);
+    } else {
+       // ÉXITO TOTAL
+       inputPublica.value = ipPublica + ":" + puerto;
+       btn.textContent = "¡Visible en Internet!";
+       btn.style.backgroundColor = "#3ba55c";
+       
+       // Copiar al portapapeles automáticamente
+       navigator.clipboard.writeText(inputPublica.value);
+       alert("¡Puerto Abierto!\n\nTu IP Pública es: " + ipPublica + "\n\nSe ha copiado al portapapeles. Pásasela a tu amigo.");
+    }
+
+  } catch (error) {
+    console.error(error);
+    btn.textContent = "Error";
+  }
+}
+
+// ... en el addEventListener ...
+window.addEventListener("DOMContentLoaded", () => {
+  // ... lo anterior ...
+  const btnUpnp = document.querySelector("#btn-upnp");
+  if(btnUpnp) btnUpnp.addEventListener("click", abrirPuertos);
+});
