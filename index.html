@@ -169,10 +169,14 @@
           <div class="input-group">
             <label>Puerto Local</label>
             <input id="puerto-local" value="5000" readonly style="opacity: 0.5; cursor: not-allowed;">
-          </div>
-        </div>
-      </div>
-
+          <div class="input-group">
+  <label>Modo Internet (UPnP)</label>
+  <div style="display: flex; gap: 10px;">
+    <button id="btn-upnp" style="background-color: #faa61a; margin-top: 0;">Abrir Puertos</button>
+    <input id="ip-publica" placeholder="Tu IP Pública aparecerá aquí" readonly style="text-align: center; font-weight: bold; color: #faa61a;">
+  </div>
+</div>
+            
       <div class="input-group">
         <label>IP del Amigo (Destino Real)</label>
         <input id="ip-destino" placeholder="Ej: 192.168.1.55:5000">
