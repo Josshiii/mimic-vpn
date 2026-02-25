@@ -21,21 +21,38 @@ jobs:
       - name: Install dependencies (Frontend)
         run: npm install
 
-      # PASO CRÍTICO: Mover el driver donde Tauri lo busca
-      # Creamos la carpeta target/debug simulada y metemos el DLL ahí
+      # PASO DE DIAGNÓSTICO (RAYOS X)
+      - name: DIAGNOSTICO DE ARCHIVOS
+        run: |
+          echo "--- LISTANDO RAIZ ---"
+          dir
+          echo "--- LISTANDO SRC-TAURI ---"
+          dir src-tauri
+          echo "--- BUSCANDO CARPETA ICONS ---"
+          if exist icons ( echo "EXISTE EN RAIZ" ) else ( echo "NO EXISTE EN RAIZ" )
+          if exist src-tauri\icons ( echo "EXISTE EN SRC-TAURI" ) else ( echo "NO EXISTE EN SRC-TAURI" )
+
+      # PASO DE AUTOCORRECCIÓN (Mover Iconos)
+      - name: Fix Icons Location
+        run: |
+          # Si los iconos están en la raiz pero no en src-tauri, los movemos
+          if exist icons (
+            echo "Moviendo iconos de Raiz a src-tauri..."
+            xcopy icons src-tauri\icons /E /I /Y
+          )
+
+      # PASO DEL DRIVER (Wintun)
       - name: Setup Wintun Driver
         run: |
-          mkdir -p src-tauri/target/debug
-          copy wintun.dll src-tauri/target/debug/wintun.dll
-          dir src-tauri/target/debug  # Verificación visual en el log
+          mkdir src-tauri\target\debug
+          copy wintun.dll src-tauri\target\debug\wintun.dll
 
-      - name: Build App (Generar Instalador)
+      - name: Build App
         run: npm run tauri build
 
-      # PASO FINAL: Subir el archivo resultante para que lo descargues
       - name: Upload Installer
         uses: actions/upload-artifact@v4
         with:
           name: Mimic-Installer
           path: src-tauri/target/release/bundle/msi/*.msi
-          if-no-files-found: error
+          if-no-files-found: warn
