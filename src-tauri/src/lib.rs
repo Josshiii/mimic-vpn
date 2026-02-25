@@ -1,4 +1,4 @@
-use std::net::UdpSocket;
+use std::net::{UdpSocket, SocketAddr}; // Importamos SocketAddr
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
@@ -10,7 +10,7 @@ use igd_next::SearchOptions;
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 
-// --- FUNCIONES DE TÚNEL (Igual que antes) ---
+// --- FUNCIONES DE TÚNEL ---
 fn iniciar_hilo_salida<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
@@ -64,29 +64,48 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
     });
 }
 
-// --- NUEVA FUNCIÓN: NEGOCIAR CON EL ROUTER (UPnP) ---
+// --- NEGOCIAR CON EL ROUTER (UPnP) ---
 #[tauri::command]
 async fn activar_upnp(puerto_local: u16) -> String {
-    // Buscar el router (Gateway)
+    // PASO 1: Descubrir mi propia IP Local (LAN)
+    // Hacemos un truco: conectamos un socket "falso" a Google DNS.
+    // No envía datos, solo sirve para que el sistema nos diga qué IP estamos usando.
+    let ip_local = match UdpSocket::bind("0.0.0.0:0") {
+        Ok(socket) => {
+            if let Err(_) = socket.connect("8.8.8.8:80") {
+                return "Error: No tienes internet para detectar tu IP".to_string();
+            }
+            match socket.local_addr() {
+                Ok(addr) => addr.ip(),
+                Err(_) => return "Error detectando IP Local".to_string(),
+            }
+        },
+        Err(_) => return "Error creando socket de detección".to_string(),
+    };
+
+    // PASO 2: Buscar el Router
     match search_gateway(SearchOptions::default()) {
         Ok(gateway) => {
-            // Pedirle que abra el puerto
-            let local_ip = match gateway.get_external_ip() {
+            // Obtener la IP Pública (WAN)
+            let ip_publica = match gateway.get_external_ip() {
                 Ok(ip) => ip,
-                Err(_) => return "Router encontrado, pero no dio IP".to_string(),
+                Err(_) => return "Router encontrado, pero no dio IP Pública".to_string(),
             };
             
-            // Mapear Puerto Externo -> Puerto Interno
-            // Le decimos: "Todo lo que llegue al puerto X, mándalo a mi PC"
+            // PASO 3: Construir la dirección completa (CORRECCIÓN DEL ERROR)
+            // El router necesita IP_LOCAL + PUERTO
+            let direccion_local = SocketAddr::new(ip_local, puerto_local);
+
+            // PASO 4: Pedir que abra el puerto
             match gateway.add_port(
                 igd_next::PortMappingProtocol::UDP,
-                puerto_local,
-                puerto_local, // Usamos el mismo puerto fuera y dentro
-                0, // Duración (0 = infinito hasta reinicio)
+                puerto_local,      // Puerto Externo (Internet)
+                direccion_local,   // Dirección Interna (Tu PC) <-- AQUÍ ESTABA EL ERROR
+                0,                 // Duración (0 = Infinito)
                 "Mimic Link Tunnel"
             ) {
-                Ok(_) => return format!("{}", local_ip), // Devolvemos TU IP PÚBLICA REAL
-                Err(e) => return format!("Fallo al abrir puerto: {}", e),
+                Ok(_) => return format!("{}", ip_publica), // ¡ÉXITO!
+                Err(e) => return format!("Router rechazó abrir el puerto: {}", e),
             }
         },
         Err(e) => return format!("No se encontró router UPnP: {}", e),
@@ -138,7 +157,6 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // Registramos AMBOS comandos
         .invoke_handler(tauri::generate_handler![conectar_tunel, activar_upnp])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
