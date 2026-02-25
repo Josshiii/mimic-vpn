@@ -3,11 +3,14 @@ use std::process::Command;
 use std::sync::Arc;
 use std::thread;
 use tauri::Emitter;
+// Importamos la librería para hablar con el Router
+use igd_next::search_gateway;
+use igd_next::SearchOptions;
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 
-// HILO 1: SALIDA (De Windows hacia Internet)
+// --- FUNCIONES DE TÚNEL (Igual que antes) ---
 fn iniciar_hilo_salida<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
@@ -22,7 +25,7 @@ fn iniciar_hilo_salida<R: tauri::Runtime>(
                     if bytes.len() > 0 {
                         match socket.send_to(bytes, &ip_amigo) {
                             Ok(_) => { let _ = app_handle.emit("trafico-salida", bytes.len()); },
-                            Err(e) => println!("Error enviando a amigo: {}", e),
+                            Err(e) => println!("Error enviando: {}", e),
                         }
                     }
                 },
@@ -32,7 +35,6 @@ fn iniciar_hilo_salida<R: tauri::Runtime>(
     });
 }
 
-// HILO 2: ENTRADA (De Internet hacia Windows)
 fn iniciar_hilo_entrada<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket,
@@ -50,19 +52,48 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
                             session.send_packet(packet);
                             let _ = app_handle.emit("trafico-entrada", size);
                         },
-                        Err(_) => println!("Error al asignar memoria en Wintun"),
+                        Err(_) => println!("Error Wintun"),
                     }
                 },
                 Err(e) => {
                     if let Some(10054) = e.raw_os_error() { continue; }
-                    println!("Error recibiendo UDP: {}", e);
+                    println!("Error UDP: {}", e);
                 }
             }
         }
     });
 }
 
-// AQUI ESTA EL CAMBIO: Ahora pedimos ip_virtual como argumento
+// --- NUEVA FUNCIÓN: NEGOCIAR CON EL ROUTER (UPnP) ---
+#[tauri::command]
+async fn activar_upnp(puerto_local: u16) -> String {
+    // Buscar el router (Gateway)
+    match search_gateway(SearchOptions::default()) {
+        Ok(gateway) => {
+            // Pedirle que abra el puerto
+            let local_ip = match gateway.get_external_ip() {
+                Ok(ip) => ip,
+                Err(_) => return "Router encontrado, pero no dio IP".to_string(),
+            };
+            
+            // Mapear Puerto Externo -> Puerto Interno
+            // Le decimos: "Todo lo que llegue al puerto X, mándalo a mi PC"
+            match gateway.add_port(
+                igd_next::PortMappingProtocol::UDP,
+                puerto_local,
+                puerto_local, // Usamos el mismo puerto fuera y dentro
+                0, // Duración (0 = infinito hasta reinicio)
+                "Mimic Link Tunnel"
+            ) {
+                Ok(_) => return format!("{}", local_ip), // Devolvemos TU IP PÚBLICA REAL
+                Err(e) => return format!("Fallo al abrir puerto: {}", e),
+            }
+        },
+        Err(e) => return format!("No se encontró router UPnP: {}", e),
+    }
+}
+
+// --- COMANDO PRINCIPAL ---
 #[tauri::command]
 fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, app_handle: tauri::AppHandle) -> String {
     
@@ -83,7 +114,7 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
         Err(e) => return format!("Error iniciando sesión: {:?}", e),
     };
 
-    // 4. Configurar IP de Windows (USAMOS LA VARIABLE ip_virtual)
+    // 4. Configurar IP de Windows
     let _ = Command::new("netsh")
         .args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK])
         .output();
@@ -100,14 +131,15 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
     iniciar_hilo_entrada(session.clone(), socket_local, app_handle.clone());
     iniciar_hilo_salida(session, socket_salida, ip_destino.clone(), app_handle);
 
-    format!("CONECTADO: Túnel activo en {}. Destino: {}", ip_virtual, ip_destino)
+    format!("CONECTADO: Túnel activo en {}", ip_virtual)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![conectar_tunel])
+        // Registramos AMBOS comandos
+        .invoke_handler(tauri::generate_handler![conectar_tunel, activar_upnp])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
