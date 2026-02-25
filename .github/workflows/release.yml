@@ -21,21 +21,18 @@ jobs:
       - name: Install dependencies (Frontend)
         run: npm install
 
-      # PREPARAR DRIVER (Solo movemos el wintun.dll por seguridad)
+      # --- AQUÍ YA NO HAY NINGÚN PASO DE ICONOS ---
+      # (Porque ya sabemos que están bien puestos)
+
+      # SOLO PREPARAR DRIVER
       - name: Setup Wintun Driver
         shell: powershell
         run: |
-          # Crear carpeta destino para que no falle la copia
           New-Item -ItemType Directory -Force -Path src-tauri\target\debug
-          
-          # Buscar wintun.dll y copiarlo
           $dll = Get-ChildItem -Path . -Recurse -Filter "wintun.dll" | Select-Object -First 1
-          
           if ($dll) {
-             Write-Host "✅ Driver encontrado en: $($dll.FullName)"
+             Write-Host "✅ Driver encontrado."
              Copy-Item -Path $dll.FullName -Destination src-tauri\target\debug\wintun.dll -Force
-          } else {
-             Write-Warning "⚠️ OJO: No encuentro wintun.dll. Si la compilación falla, revisa que subiste ese archivo."
           }
 
       - name: Build App
