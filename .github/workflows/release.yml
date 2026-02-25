@@ -21,31 +21,49 @@ jobs:
       - name: Install dependencies (Frontend)
         run: npm install
 
-      # PASO DE DIAGNÓSTICO (RAYOS X)
-      - name: DIAGNOSTICO DE ARCHIVOS
+      # --- EL SABUESO (BÚSQUEDA IMPLACABLE) ---
+      # Este paso busca el archivo 'icon.ico' en TODO el repositorio
+      # y lo mueve a la fuerza a src-tauri/icons/
+      - name: BUSQUEDA IMPLACABLE DE ICONOS
+        shell: powershell
         run: |
-          echo "--- LISTANDO RAIZ ---"
-          dir
-          echo "--- LISTANDO SRC-TAURI ---"
-          dir src-tauri
-          echo "--- BUSCANDO CARPETA ICONS ---"
-          if exist icons ( echo "EXISTE EN RAIZ" ) else ( echo "NO EXISTE EN RAIZ" )
-          if exist src-tauri\icons ( echo "EXISTE EN SRC-TAURI" ) else ( echo "NO EXISTE EN SRC-TAURI" )
+          echo "--- INICIANDO RASTREO DE ICON.ICO ---"
+          $icon = Get-ChildItem -Path . -Recurse -Filter icon.ico -ErrorAction SilentlyContinue | Select-Object -First 1
+          
+          if ($icon) {
+            echo "✅ ICONO ENCONTRADO EN: $($icon.FullName)"
+            
+            # Crear la carpeta destino si no existe
+            $destPath = "src-tauri\icons"
+            if (-not (Test-Path $destPath)) {
+                echo "Creando carpeta src-tauri/icons..."
+                New-Item -ItemType Directory -Force -Path $destPath
+            }
 
-      # PASO DE AUTOCORRECCIÓN (Mover Iconos)
-      - name: Fix Icons Location
-        run: |
-          # Si los iconos están en la raiz pero no en src-tauri, los movemos
-          if exist icons (
-            echo "Moviendo iconos de Raiz a src-tauri..."
-            xcopy icons src-tauri\icons /E /I /Y
-          )
+            # Copiar el icono y sus amigos png
+            echo "Copiando archivos a su lugar correcto..."
+            Copy-Item -Path $icon.FullName -Destination "$destPath\icon.ico" -Force
+            
+            # Intentar copiar los PNGs que estén junto al icono
+            Copy-Item -Path "$($icon.Directory)\*.png" -Destination $destPath -Force
+            
+            echo "✨ ARREGLADO: Los iconos están ahora en src-tauri/icons"
+          } else {
+            echo "❌ ERROR FATAL: El archivo icon.ico NO EXISTE en ninguna parte de este repositorio."
+            echo "Por favor, sube el archivo icon.ico a GitHub."
+            exit 1
+          }
 
       # PASO DEL DRIVER (Wintun)
       - name: Setup Wintun Driver
+        shell: powershell
         run: |
-          mkdir src-tauri\target\debug
-          copy wintun.dll src-tauri\target\debug\wintun.dll
+          New-Item -ItemType Directory -Force -Path src-tauri\target\debug
+          if (Test-Path wintun.dll) {
+            Copy-Item -Path wintun.dll -Destination src-tauri\target\debug\wintun.dll
+          } else {
+            echo "ADVERTENCIA: No encuentro wintun.dll en la raíz."
+          }
 
       - name: Build App
         run: npm run tauri build
