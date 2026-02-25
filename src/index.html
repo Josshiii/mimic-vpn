@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mimic Link</title>
+    <style>
+      body { background-color: #0a0a0a; color: #00ff00; font-family: monospace; padding: 20px; text-align: center; }
+      input { background: #111; border: 1px solid #333; color: white; padding: 10px; width: 80%; margin: 5px; font-size: 1.2em; text-align: center; }
+      button { background: #008800; color: white; border: none; padding: 15px; width: 90%; font-size: 1.2em; cursor: pointer; font-weight: bold; margin-top: 20px; }
+      .log { margin-top: 20px; font-size: 0.9em; color: #aaa; }
+      .led { height: 15px; width: 15px; background-color: #333; border-radius: 50%; display: inline-block; margin: 0 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>MIMIC LINK v1.0</h1>
+    
+    <h3>MI PUERTO (Local)</h3>
+    <input id="puerto-local" value="5000" placeholder="Ej: 5000">
+
+    <h3>IP DESTINO (Amigo)</h3>
+    <input id="ip-destino" value="127.0.0.1:5001" placeholder="IP:PUERTO">
+
+    <button id="btn-conectar">INICIAR ENLACE</button>
+
+    <div style="margin-top: 30px;">
+      <span class="led" id="led-tx"></span> TX (Salida)
+      <span class="led" id="led-rx"></span> RX (Entrada)
+    </div>
+
+    <p class="log" id="status">Estado: Desconectado</p>
+
+    <script src="/main.js" defer></script>
+  </body>
+</html>
