@@ -1,25 +1,25 @@
-// Acceso al núcleo de Tauri
-// NOTA: Si window.__TAURI__ falla, asegúrate de que tauri.conf.json tenga "withGlobalTauri": true
 const invoke = window.__TAURI__.core.invoke;
 const listen = window.__TAURI__.event.listen;
 
 async function conectar() {
+  const ipVirtualInput = document.querySelector("#ip-virtual"); // NUEVO
   const ipInput = document.querySelector("#ip-destino");
   const puertoInput = document.querySelector("#puerto-local");
   const status = document.querySelector("#status");
   
-  status.textContent = "Intentando conectar...";
+  status.textContent = "Configurando red...";
   status.style.color = "yellow";
 
   try {
-    // CORRECCIÓN AQUÍ: Tauri convierte automáticamente snake_case a camelCase
+    // Enviamos los 3 datos a Rust
     const respuesta = await invoke("conectar_tunel", { 
-      ipDestino: ipInput.value,     // Rust espera ip_destino, pero aquí se llama ipDestino
-      puertoLocal: puertoInput.value // Rust espera puerto_local, pero aquí se llama puertoLocal
+      ipVirtual: ipVirtualInput.value, // Esto se convierte en ip_virtual en Rust
+      ipDestino: ipInput.value,
+      puertoLocal: puertoInput.value
     });
     
     status.textContent = respuesta;
-    status.style.color = "#00ff00"; // Verde Éxito
+    status.style.color = "#00ff00";
 
   } catch (error) {
     console.error(error);
@@ -28,7 +28,6 @@ async function conectar() {
   }
 }
 
-// Sistema de Luces (LEDs)
 async function iniciarLuces() {
   const ledTx = document.querySelector("#led-tx");
   const ledRx = document.querySelector("#led-rx");
@@ -44,7 +43,7 @@ async function iniciarLuces() {
         setTimeout(() => ledRx.style.backgroundColor = "#333", 50);
       });
   } catch (e) {
-      console.log("Sistema de luces no disponible aún: " + e);
+      console.log("Luces off: " + e);
   }
 }
 
