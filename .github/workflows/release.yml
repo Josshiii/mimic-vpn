@@ -21,50 +21,20 @@ jobs:
       - name: Install dependencies (Frontend)
         run: npm install
 
-      # --- EL SABUESO (VERSIÓN POWERSHELL CORREGIDA) ---
-      # Busca icon.ico donde sea y lo pone en su sitio.
-      - name: BUSQUEDA Y ARREGLO DE ICONOS
-        run: |
-          Write-Host "--- INICIANDO RASTREO DE ICON.ICO ---"
-          # Buscar el archivo en todo el proyecto
-          $icon = Get-ChildItem -Path . -Recurse -Filter "icon.ico" -ErrorAction SilentlyContinue | Select-Object -First 1
-          
-          if ($icon) {
-            Write-Host "✅ ICONO ENCONTRADO EN: $($icon.FullName)"
-            
-            # 1. Crear la carpeta destino (src-tauri/icons) si no existe
-            $destPath = "src-tauri\icons"
-            if (-not (Test-Path $destPath)) {
-                Write-Host "Creando carpeta src-tauri/icons..."
-                New-Item -ItemType Directory -Force -Path $destPath
-            }
-
-            # 2. Copiar el icono a la fuerza
-            Write-Host "Copiando archivo a $destPath\icon.ico ..."
-            Copy-Item -Path $icon.FullName -Destination "$destPath\icon.ico" -Force
-            
-            # 3. Copiar también los PNGs si están en la misma carpeta que el icono
-            Write-Host "Buscando PNGs amigos..."
-            Copy-Item -Path "$($icon.Directory)\*.png" -Destination $destPath -Force
-            
-            Write-Host "✨ ARREGLADO: Iconos listos."
-          } else {
-            Write-Error "❌ ERROR FATAL: No existe el archivo icon.ico en ningún lugar del repositorio."
-            exit 1
-          }
-
-      # PASO DEL DRIVER (Wintun)
+      # SOLO DRIVER (Los iconos ya están bien)
       - name: Setup Wintun Driver
         run: |
+          # 1. Crear carpeta destino
           New-Item -ItemType Directory -Force -Path src-tauri\target\debug
-          # Buscar wintun.dll donde sea
+          
+          # 2. Buscar wintun.dll y copiarlo
           $dll = Get-ChildItem -Path . -Recurse -Filter "wintun.dll" | Select-Object -First 1
           
           if ($dll) {
+             Write-Host "✅ Driver encontrado en: $($dll.FullName)"
              Copy-Item -Path $dll.FullName -Destination src-tauri\target\debug\wintun.dll -Force
-             Write-Host "✅ Driver Wintun colocado."
           } else {
-             Write-Warning "⚠️ ADVERTENCIA: No encuentro wintun.dll. La compilación podría fallar."
+             Write-Warning "⚠️ ADVERTENCIA: No encuentro wintun.dll. Si la compilación falla, es por esto."
           }
 
       - name: Build App
