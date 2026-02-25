@@ -21,18 +21,25 @@ jobs:
       - name: Install dependencies (Frontend)
         run: npm install
 
-      # --- AQUÍ YA NO HAY NINGÚN PASO DE ICONOS ---
-      # (Porque ya sabemos que están bien puestos)
-
-      # SOLO PREPARAR DRIVER
-      - name: Setup Wintun Driver
+      # PASO CLAVE: Mover wintun.dll A LA CARPETA src-tauri
+      # Esto es necesario para que la configuración "resources": ["wintun.dll"] lo encuentre.
+      - name: Prepare Driver for Bundling
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path src-tauri\target\debug
           $dll = Get-ChildItem -Path . -Recurse -Filter "wintun.dll" | Select-Object -First 1
+          
           if ($dll) {
-             Write-Host "✅ Driver encontrado."
+             Write-Host "✅ Driver encontrado en: $($dll.FullName)"
+             # Copiarlo a src-tauri (para que el instalador lo vea)
+             Copy-Item -Path $dll.FullName -Destination src-tauri\wintun.dll -Force
+             # Copiarlo también a target/debug (por si acaso el compilador lo pide)
+             New-Item -ItemType Directory -Force -Path src-tauri\target\debug
              Copy-Item -Path $dll.FullName -Destination src-tauri\target\debug\wintun.dll -Force
+             
+             Write-Host "✨ LISTO: Driver colocado en la pista de despegue."
+          } else {
+             Write-Error "❌ ERROR FATAL: No encuentro wintun.dll en el repositorio."
+             exit 1
           }
 
       - name: Build App
