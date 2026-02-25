@@ -4,8 +4,6 @@ use std::sync::Arc;
 use std::thread;
 use tauri::Emitter;
 
-// CONFIGURACIÓN DE RED
-const TUNEL_IP: &str = "10.10.10.2"; 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 
@@ -18,22 +16,17 @@ fn iniciar_hilo_salida<R: tauri::Runtime>(
 ) {
     thread::spawn(move || {
         loop {
-            // Leemos el paquete del juego (Wintun)
             match session.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
                     if bytes.len() > 0 {
-                        // ¡DISPARO! Lo enviamos a la IP del amigo por UDP
                         match socket.send_to(bytes, &ip_amigo) {
-                            Ok(_) => {
-                                // Avisamos al frontend (Parpadeo LED TX)
-                                let _ = app_handle.emit("trafico-salida", bytes.len());
-                            },
+                            Ok(_) => { let _ = app_handle.emit("trafico-salida", bytes.len()); },
                             Err(e) => println!("Error enviando a amigo: {}", e),
                         }
                     }
                 },
-                Err(_) => break, // Si el túnel muere, el hilo muere
+                Err(_) => break,
             }
         }
     });
@@ -46,32 +39,22 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>
 ) {
     thread::spawn(move || {
-        let mut buffer = [0; 65535]; // Buffer gigante para paquetes UDP
-
+        let mut buffer = [0; 65535]; 
         loop {
-            // Esperamos recibir algo de Internet
             match socket.recv_from(&mut buffer) {
                 Ok((size, _origen)) => {
                     let datos_recibidos = &buffer[..size];
-                    
                     match session.allocate_send_packet(size as u16) {
                         Ok(mut packet) => {
-                            // Copiamos los datos de Internet al paquete de Windows
                             packet.bytes_mut().copy_from_slice(datos_recibidos);
-                            // ¡Inyectamos!
                             session.send_packet(packet);
-                            
-                            // Avisamos al frontend (Parpadeo LED RX)
                             let _ = app_handle.emit("trafico-entrada", size);
                         },
                         Err(_) => println!("Error al asignar memoria en Wintun"),
                     }
                 },
                 Err(e) => {
-                    // PARCHE DE SEGURIDAD 10054 (Ignorar desconexión remota)
-                    if let Some(10054) = e.raw_os_error() {
-                        continue; 
-                    }
+                    if let Some(10054) = e.raw_os_error() { continue; }
                     println!("Error recibiendo UDP: {}", e);
                 }
             }
@@ -79,16 +62,13 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
     });
 }
 
-// COMANDO PRINCIPAL
+// AQUI ESTA EL CAMBIO: Ahora pedimos ip_virtual como argumento
 #[tauri::command]
-fn conectar_tunel(ip_destino: String, puerto_local: String, app_handle: tauri::AppHandle) -> String {
-    // 1. Cargar Driver
-    // NOTA: En producción, el DLL estará junto al ejecutable
-    let wintun = unsafe { wintun::load_from_path("wintun.dll") };
+fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, app_handle: tauri::AppHandle) -> String {
     
-    if wintun.is_err() { 
-        return "ERROR CRÍTICO: No encuentro wintun.dll junto al programa".to_string(); 
-    }
+    // 1. Cargar Driver
+    let wintun = unsafe { wintun::load_from_path("wintun.dll") };
+    if wintun.is_err() { return "ERROR CRÍTICO: No encuentro wintun.dll".to_string(); }
     let wintun = wintun.unwrap();
 
     // 2. Crear Adaptador
@@ -97,33 +77,30 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, app_handle: tauri::A
         Err(e) => return format!("Error creando adaptador: {:?}", e),
     };
 
-    // 3. Iniciar Sesión (Usamos 0x400000 como capacidad)
+    // 3. Iniciar Sesión
     let session = match adapter.start_session(0x400000) {
         Ok(s) => Arc::new(s),
         Err(e) => return format!("Error iniciando sesión: {:?}", e),
     };
 
-    // 4. Configurar IP de Windows
+    // 4. Configurar IP de Windows (USAMOS LA VARIABLE ip_virtual)
     let _ = Command::new("netsh")
-        .args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", TUNEL_IP, TUNEL_MASK])
+        .args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK])
         .output();
 
-    // 5. Preparar los Sockets UDP (Internet)
+    // 5. Preparar Sockets
     let socket_local = match UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)) {
         Ok(s) => s,
         Err(e) => return format!("Puerto local ocupado: {}", e),
     };
     
-    // Clonamos el socket para que el hilo de salida también pueda usarlo
     let socket_salida = socket_local.try_clone().unwrap();
 
-    // 6. LANZAR LOS DOS HILOS
+    // 6. Lanzar Hilos
     iniciar_hilo_entrada(session.clone(), socket_local, app_handle.clone());
-    
-    // Usamos .clone() para darle una COPIA de la IP al hilo
     iniciar_hilo_salida(session, socket_salida, ip_destino.clone(), app_handle);
 
-    format!("CONECTADO: Túnel activo. Enviando a {}", ip_destino)
+    format!("CONECTADO: Túnel activo en {}. Destino: {}", ip_virtual, ip_destino)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
