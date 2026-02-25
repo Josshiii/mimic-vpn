@@ -10,15 +10,19 @@
       button { background: #008800; color: white; border: none; padding: 15px; width: 90%; font-size: 1.2em; cursor: pointer; font-weight: bold; margin-top: 20px; }
       .log { margin-top: 20px; font-size: 0.9em; color: #aaa; }
       .led { height: 15px; width: 15px; background-color: #333; border-radius: 50%; display: inline-block; margin: 0 10px; }
+      h3 { margin-bottom: 5px; color: #00cc00; }
     </style>
   </head>
   <body>
     <h1>MIMIC LINK v1.0</h1>
     
+    <h3>MI IP VIRTUAL (VPN)</h3>
+    <input id="ip-virtual" value="10.10.10.2" placeholder="Ej: 10.10.10.2">
+
     <h3>MI PUERTO (Local)</h3>
     <input id="puerto-local" value="5000" placeholder="Ej: 5000">
 
-    <h3>IP DESTINO (Amigo)</h3>
+    <h3>IP AMIGO (Destino)</h3>
     <input id="ip-destino" value="127.0.0.1:5001" placeholder="IP:PUERTO">
 
     <button id="btn-conectar">INICIAR ENLACE</button>
