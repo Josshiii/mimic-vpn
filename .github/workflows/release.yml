@@ -1,4 +1,4 @@
-name: Release
+name: Release Mimic VPN
 on:
   push:
     branches: [ main ]
@@ -9,18 +9,33 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
+
       - name: Setup Node
         uses: actions/setup-node@v3
         with:
           node-version: 18
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Install dependencies
+
+      - name: Install dependencies (Frontend)
         run: npm install
-      - name: Build App
+
+      # PASO CRÍTICO: Mover el driver donde Tauri lo busca
+      # Creamos la carpeta target/debug simulada y metemos el DLL ahí
+      - name: Setup Wintun Driver
+        run: |
+          mkdir -p src-tauri/target/debug
+          copy wintun.dll src-tauri/target/debug/wintun.dll
+          dir src-tauri/target/debug  # Verificación visual en el log
+
+      - name: Build App (Generar Instalador)
         run: npm run tauri build
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+
+      # PASO FINAL: Subir el archivo resultante para que lo descargues
+      - name: Upload Installer
+        uses: actions/upload-artifact@v4
         with:
-          name: Mimic-App-Installer
+          name: Mimic-Installer
           path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
