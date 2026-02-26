@@ -2,7 +2,7 @@ use std::net::UdpSocket;
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration; // Solo Duration, quitamos Instant
+use std::time::Duration; 
 use tauri::Emitter;
 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
@@ -12,11 +12,11 @@ use base64::{Engine as _, engine::general_purpose};
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
-const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; // Mensaje secreto
+const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
 
 // --- FUNCIONES DE RED ---
 
-// 1. HILO DE SALIDA (Juego -> Internet)
+// 1. HILO DE SALIDA 
 fn iniciar_hilo_salida<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
@@ -40,8 +40,7 @@ fn iniciar_hilo_salida<R: tauri::Runtime>(
     });
 }
 
-// 2. HILO DE LATIDO (Keep-Alive) - CORREGIDO
-// Eliminamos <R: tauri::Runtime> porque este hilo no habla con la UI
+// 2. HILO DE LATIDO 
 fn iniciar_hilo_latido(
     socket: UdpSocket, 
     ip_amigo: String, 
@@ -50,7 +49,6 @@ fn iniciar_hilo_latido(
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
-            // Enviamos latido para mantener el NAT abierto
             enviar_paquete_seguro(&socket, &ip_amigo, HEARTBEAT_MSG, &cipher);
         }
     });
@@ -69,7 +67,7 @@ fn enviar_paquete_seguro(socket: &UdpSocket, destino: &str, datos: &[u8], cipher
     }
 }
 
-// 3. HILO DE ENTRADA (Internet -> Juego)
+// 3. HILO DE ENTRADA 
 fn iniciar_hilo_entrada<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
@@ -86,13 +84,9 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
 
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         
-                        // ¿ES UN LATIDO?
                         if decrypted == HEARTBEAT_MSG {
-                            // Avisamos al Frontend para el efecto visual
                             let _ = app_handle.emit("evento-ping", ());
-                        } 
-                        // ¿TRÁFICO REAL?
-                        else {
+                        } else {
                             if let Ok(mut packet) = session.allocate_send_packet(decrypted.len() as u16) {
                                 packet.bytes_mut().copy_from_slice(&decrypted);
                                 session.send_packet(packet);
@@ -136,18 +130,18 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
         Ok(s) => s, Err(e) => return format!("Puerto ocupado: {}", e),
     };
     
-    // Hole Punching Inicial
     let _ = socket_local.send_to(b"HELLO_NAT", &ip_destino);
 
     let session_arc = Arc::new(session);
 
-    // Lanzamos los 3 Hilos
+    // Lanzamos los Hilos
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
     iniciar_hilo_salida(session_arc, socket_local.try_clone().unwrap(), ip_destino.clone(), cipher.clone(), app_handle);
     
-    // Aquí llamamos a la función corregida (sin genéricos)
-    iniciar_hilo_latido(socket_local, ip_destino, cipher);
+    // CORRECCIÓN AQUÍ: Usamos ip_destino.clone()
+    iniciar_hilo_latido(socket_local, ip_destino.clone(), cipher);
 
+    // Ahora ip_destino sigue viva para usarse aquí
     format!("ENLACE ACTIVO CON: {}", ip_destino)
 }
 
