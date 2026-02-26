@@ -152,30 +152,127 @@
 
     </style>
   </head>
-  <body>
-
+ <body>
     <div class="app-container">
       <h1>Mimic Link</h1>
-      <p class="subtitle"> LAN Tunneling Protocol</p>
+      <p class="subtitle">Cloud Tunneling System</p>
 
       <div class="row">
         <div class="col">
           <div class="input-group">
             <label>Mi Identidad (VPN IP)</label>
-            <input id="ip-virtual" value="10.10.10.2" placeholder="10.10.10.2">
+            <input id="ip-virtual" value="10.10.10.2">
           </div>
         </div>
         <div class="col">
           <div class="input-group">
             <label>Puerto Local</label>
-            <input id="puerto-local" value="5000" readonly style="opacity: 0.5; cursor: not-allowed;">
-          <div class="input-group">
-  <label>Modo Internet (UPnP)</label>
-  <div style="display: flex; gap: 10px;">
-    <button id="btn-upnp" style="background-color: #faa61a; margin-top: 0;">Abrir Puertos</button>
-    <input id="ip-publica" placeholder="Tu IP Pública aparecerá aquí" readonly style="text-align: center; font-weight: bold; color: #faa61a;">
-  </div>
-</div>
+            <input id="puerto-local" value="5000" readonly style="opacity: 0.5;">
+          </div>
+        </div>
+      </div>
+
+      <hr style="border-color: #40444b; margin: 20px 0; opacity: 0.3;">
+
+      <div class="input-group">
+        <label style="color: #faa61a;">☁️ CÓDIGO DE SALA (Matchmaking)</label>
+        <div style="display: flex; gap: 10px;">
+          <input id="room-code" placeholder="Ej: HALO1" style="text-align: center; font-weight: bold; letter-spacing: 2px; text-transform: uppercase;">
+          <button id="btn-cloud" style="background-color: #5865F2;">UNIRSE</button>
+        </div>
+        <p style="font-size: 11px; color: #72767d; margin-top: 8px;">
+          * Ambos jugadores deben escribir el MISMO código y pulsar UNIRSE al mismo tiempo.
+        </p>
+      </div>
+
+      <div class="status-card">
+        <div class="status-text">
+          <span class="status-dot" id="main-status-dot"></span>
+          <span id="status">Esperando conexión...</span>
+        </div>
+        <div class="activity-lights">
+          <span class="activity-pill" id="led-tx">TX</span>
+          <span class="activity-pill" id="led-rx">RX</span>
+        </div>
+      </div>
+    </div>
+
+    <script type="module">
+      const invoke = window.__TAURI__.core.invoke;
+      const listen = window.__TAURI__.event.listen;
+
+      // Elementos
+      const statusText = document.querySelector("#status");
+      const btnCloud = document.querySelector("#btn-cloud");
+      
+      // Función Conectar Nube
+      async function conectarNube() {
+        const room = document.querySelector("#room-code").value;
+        const ipVirtual = document.querySelector("#ip-virtual").value;
+        const puerto = document.querySelector("#puerto-local").value;
+
+        if (!room) {
+          statusText.textContent = "¡Escribe un código de sala!";
+          statusText.style.color = "red";
+          return;
+        }
+
+        btnCloud.textContent = "BUSCANDO...";
+        btnCloud.disabled = true;
+        btnCloud.style.backgroundColor = "#faa61a"; // Amarillo
+        statusText.textContent = "Conectando a Render...";
+
+        try {
+          // Invocamos la nueva función 'conectar_sala'
+          const respuesta = await invoke("conectar_sala", { 
+            codigoSala: room,
+            puertoLocal: puerto,
+            ipVirtual: ipVirtual
+          });
+
+          statusText.textContent = respuesta;
+          
+          if (respuesta.includes("CONECTADO")) {
+            statusText.style.color = "#3ba55c"; // Verde
+            btnCloud.textContent = "EN LÍNEA";
+            btnCloud.style.backgroundColor = "#3ba55c";
+          } else {
+            statusText.style.color = "red";
+            btnCloud.textContent = "REINTENTAR";
+            btnCloud.disabled = false;
+            btnCloud.style.backgroundColor = "#ed4245";
+          }
+
+        } catch (e) {
+          statusText.textContent = "Error: " + e;
+          btnCloud.disabled = false;
+        }
+      }
+
+      // Escuchar logs de progreso
+      listen('status-log', (e) => {
+        statusText.textContent = e.payload;
+      });
+
+      // Escuchar tráfico (Luces)
+      listen('trafico-salida', () => {
+        const led = document.querySelector("#led-tx");
+        led.classList.add("active-tx");
+        setTimeout(() => led.classList.remove("active-tx"), 100);
+      });
+      
+      listen('trafico-entrada', () => {
+        const led = document.querySelector("#led-rx");
+        led.classList.add("active-rx");
+        setTimeout(() => led.classList.remove("active-rx"), 100);
+      });
+
+      // Event Listeners
+      window.addEventListener("DOMContentLoaded", () => {
+        btnCloud.addEventListener("click", conectarNube);
+      });
+    </script>
+  </body>
             
       <div class="input-group">
         <label>IP del Amigo (Destino Real)</label>
