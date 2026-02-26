@@ -12,19 +12,19 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Mimic Link",
-        "width": 460,        
-        "height": 650,       
-        "resizable": false,  
+        "title": "Mimic Hub",
+        "width": 900,
+        "height": 600,
+        "resizable": false,
         "maximizable": false,
         "fullscreen": false,
-        "center": true       
+        "center": true
       }
     ],
     "security": {
-      "csp": null,
-      "capabilities": []
+      "csp": null
     }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -39,6 +39,3 @@
     ]
   }
 }
-
-
-
