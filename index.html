@@ -51,7 +51,7 @@
       <h2>MIMIC HUB</h2>
       
       <label>TU NOMBRE</label>
-      <input id="my-name" value="Jugador 1">
+      <input id="my-name" value="Sasha">
 
       <label>JUEGO</label>
       <input id="my-game" value="Halo CE">
@@ -94,6 +94,7 @@
       const listen = window.__TAURI__.event.listen;
 
       // --- CONFIGURACIÓN ---
+      // Asegúrate de que esta URL sea la de tu Render actual
       const SERVER_URL = "wss://mimic-signal.onrender.com"; 
       let ws;
 
@@ -121,14 +122,14 @@
             }
             // Recibimos orden de conectar
             if (msg.type === 'MATCH_FOUND') {
-                startTunnel(msg.peer_ip, msg.peer_port);
+                startTunnel(msg.peer_ip, msg.peer_port, msg.role);
             }
         };
 
         ws.onclose = () => setTimeout(connect, 3000); // Reintentar si se cae
       }
 
-      // 2. MOSTRAR LISTA DE JUEGOS
+      // 2. MOSTRAR LISTA DE JUEGOS (CORREGIDO EL ERROR DE UNDEFINED)
       function renderList(lobbies) {
         listDiv.innerHTML = "";
         const codes = Object.keys(lobbies);
@@ -143,10 +144,17 @@
             // HTML de cada fila
             const card = document.createElement('div');
             card.className = "server-card";
+            
+            // AQUÍ ESTABA EL ERROR: Antes usábamos l.game, ahora usamos l.gameName
+            // Aseguramos que existan datos o ponemos "Desconocido"
+            const juego = l.gameName || "Juego Desconocido";
+            const version = l.gameVer || "v1.0";
+            const host = l.hostName || "Anónimo";
+
             card.innerHTML = `
                 <div>
-                    <div class="game-info">${l.game} <span style="color:#666; font-size:11px;">(${l.version})</span></div>
-                    <div class="host-info">Host: ${l.host}</div>
+                    <div class="game-info">${juego} <span style="color:#666; font-size:11px;">(${version})</span></div>
+                    <div class="host-info">Host: ${host}</div>
                 </div>
                 <button class="join-btn" onclick="unirse('${code}')">UNIRSE</button>
             `;
@@ -164,6 +172,7 @@
         // Creamos un código aleatorio interno
         const code = Math.random().toString(36).substring(7);
 
+        // Enviamos los datos con los nombres correctos: hostName, gameName, gameVer
         ws.send(JSON.stringify({
             type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port
         }));
@@ -177,19 +186,23 @@
       window.unirse = (code) => {
         const port = document.getElementById('puerto-local').value;
         ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
-        statusText.textContent = "Uniéndose...";
+        statusText.textContent = "Iniciando negociación...";
       };
 
       // 5. INICIAR TÚNEL (Rust)
-      async function startTunnel(ip, port) {
-        statusText.textContent = `¡CONECTADO CON ${ip}!`;
+      async function startTunnel(ip, port, role) {
+        // Mensaje más amigable
+        if (role === 'HOST') {
+            statusText.textContent = `¡JUGADOR CONECTADO! IP: ${ip}`;
+        } else {
+            statusText.textContent = `¡CONECTADO AL HOST! IP: ${ip}`;
+        }
         statusText.style.color = "#a4d007"; // Verde
         
         const ipVirtual = document.getElementById('ip-virtual').value;
         const puertoLocal = document.getElementById('puerto-local').value;
 
         try {
-            // Llamamos a Rust para que haga el trabajo sucio
             await invoke("conectar_tunel", { 
                 ipDestino: ip + ":" + port,
                 puertoLocal: puertoLocal,
