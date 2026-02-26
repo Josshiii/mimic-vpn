@@ -126,7 +126,7 @@ const invoke = window.__TAURI__.core.invoke;
     const SERVER_URL = "wss://mimic-signal.onrender.com"; 
     let ws;
 
-    // --- SISTEMA DE PERFIL LOCAL (Igual que antes) ---
+    // --- 1. SISTEMA DE IDENTIDAD (Auto-IP) ---
     let myId = localStorage.getItem('mimic_id');
     if (!myId) {
         myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
@@ -134,6 +134,24 @@ const invoke = window.__TAURI__.core.invoke;
     }
     document.getElementById('my-id-display').textContent = myId;
 
+    // ALGORITMO: Generar IP única basada en el ID
+    // Convierte "M-X7Z9" -> un número entre 2 y 254 -> "10.10.10.XXX"
+    function generateIpFromId(id) {
+        let hash = 0;
+        for (let i = 0; i < id.length; i++) {
+            hash = id.charCodeAt(i) + ((hash << 5) - hash);
+        }
+        // Aseguramos rango 2-254 (El .1 es el Gateway, el .255 es Broadcast)
+        const lastOctet = (Math.abs(hash) % 253) + 2; 
+        return `10.10.10.${lastOctet}`;
+    }
+
+    // Auto-Asignar IP y guardarla en el input oculto
+    const myAutoIp = generateIpFromId(myId);
+    document.getElementById('ip-virtual').value = myAutoIp;
+    console.log(`Tu IP Asignada Automáticamente es: ${myAutoIp}`);
+
+    // --- CARGAR DATOS GUARDADOS ---
     let savedName = localStorage.getItem('mimic_name') || "Jugador";
     document.getElementById('my-name').value = savedName;
     document.getElementById('ui-name-display').textContent = savedName;
@@ -186,7 +204,6 @@ const invoke = window.__TAURI__.core.invoke;
             }
             
             if (msg.type === 'MATCH') {
-                // RECIBIMOS LA CLAVE DE ENCRIPTACIÓN AQUÍ
                 startTunnel(msg.peer_ip, msg.peer_port, msg.role, msg.key);
             }
         };
@@ -199,7 +216,7 @@ const invoke = window.__TAURI__.core.invoke;
         ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: name }));
     }
 
-    // --- RENDERIZADO (Igual que antes) ---
+    // --- RENDERIZADO ---
     function renderFriends(onlinePlayers) {
         const listEl = document.getElementById('friends-list');
         listEl.innerHTML = "";
@@ -253,9 +270,8 @@ const invoke = window.__TAURI__.core.invoke;
         });
     }
 
-    // --- ACCIONES CRÍTICAS ACTUALIZADAS ---
+    // --- ACCIONES ---
     
-    // AL CREAR SALA: Generamos una llave y la enviamos al servidor
     document.getElementById('btn-host').addEventListener('click', async () => {
         const code = Math.random().toString(36).substring(7);
         const name = document.getElementById('my-name').value;
@@ -263,14 +279,11 @@ const invoke = window.__TAURI__.core.invoke;
         const ver = document.getElementById('my-version').value;
         const port = document.getElementById('puerto-local').value;
 
-        // 1. Generar Clave Militar en Rust
+        // 1. Clave Segura
         const secureKey = await invoke("generar_clave_segura");
-
-        // 2. Guardarla en memoria temporalmente (somos el Host)
         window.currentKey = secureKey;
 
-        // 3. Enviarla al servidor (viaja por TLS/SSL seguro)
-        // Nota: Solo se la daremos al cliente que se una
+        // 2. Enviar datos al server
         ws.send(JSON.stringify({
             type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port, key: secureKey
         }));
@@ -284,22 +297,21 @@ const invoke = window.__TAURI__.core.invoke;
         ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
     };
 
-    // AL CONECTAR: Usamos la clave recibida
     async function startTunnel(ip, port, role, receivedKey) {
         document.getElementById('log-text').textContent = "Estableciendo Enlace Seguro...";
         document.getElementById('log-text').style.color = "#a4d007";
         
-        // Si somos HOST, usamos la clave que generamos. Si somos CLIENT, usamos la recibida.
         const keyToUse = role === 'HOST' ? window.currentKey : receivedKey;
+        const myAutoIp = document.getElementById('ip-virtual').value; // Usamos la IP Auto-generada
 
         try {
             await invoke("conectar_tunel", { 
                 ipDestino: ip + ":" + port, 
                 puertoLocal: document.getElementById('puerto-local').value,
-                ipVirtual: document.getElementById('ip-virtual').value,
-                claveB64: keyToUse // <--- Pasamos la clave a Rust
+                ipVirtual: myAutoIp, // <--- IP CALCULADA AUTOMÁTICAMENTE
+                claveB64: keyToUse 
             });
-            document.getElementById('log-text').textContent = "🔒 CONEXIÓN ENCRIPTADA (ChaCha20)";
+            document.getElementById('log-text').textContent = `🔒 CONEXIÓN SEGURA (Tu IP: ${myAutoIp})`;
         } catch (e) { console.error(e); }
     }
 
