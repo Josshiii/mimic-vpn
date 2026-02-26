@@ -115,9 +115,16 @@
         <input id="puerto-local" value="5000">
     </div>
 
-    <div class="status-bar">
-        <span id="log-text">Iniciando sistema...</span>
-        <div id="traffic-led" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
+<div class="status-bar">
+        <div style="display:flex; gap:10px; align-items:center;">
+            <div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
+            <span id="log-text">Sistema Listo</span>
+        </div>
+        
+        <div style="display:flex; gap:15px; align-items:center;">
+            <span id="ping-text" style="font-family:monospace;">-- ms</span>
+            <div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div>
+        </div>
     </div>
 
     <script type="module">
@@ -319,6 +326,42 @@ const invoke = window.__TAURI__.core.invoke;
     listen('trafico-entrada', () => {
         const led = document.getElementById('traffic-led');
         led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
+    });
+
+        // --- SISTEMA DE PING Y MONITOREO ---
+    let lastPingTime = Date.now();
+    let pingInterval;
+
+    // Escuchar el latido que viene de Rust
+    listen('evento-ping', () => {
+        const now = Date.now();
+        // Calculamos un "Ping Simulado" basado en la frecuencia de llegada
+        // (Para ping real exacto se necesita protocolo de ida y vuelta, esto es una aprox visual)
+        const diff = now - lastPingTime;
+        lastPingTime = now;
+
+        // Actualizar UI
+        const pingDisplay = Math.min(Math.max(diff - 2000, 1), 999); // Ajuste visual
+        // Nota: Como mandamos cada 2000ms, la diferencia real de red es pequeña.
+        // Para simplificar: Si llega el evento, estamos conectados.
+        
+        document.getElementById('ping-dot').style.background = "#a4d007"; // Verde
+        document.getElementById('ping-dot').style.boxShadow = "0 0 8px #a4d007";
+        document.getElementById('ping-text').textContent = "CONECTADO";
+        document.getElementById('ping-text').style.color = "#a4d007";
+
+        // Efecto de parpadeo
+        setTimeout(() => {
+            document.getElementById('ping-dot').style.boxShadow = "none";
+        }, 200);
+        
+        // Reiniciar temporizador de "Muerte"
+        clearTimeout(pingInterval);
+        pingInterval = setTimeout(() => {
+            document.getElementById('ping-dot').style.background = "#ef4444"; // Rojo
+            document.getElementById('ping-text').textContent = "SIN SEÑAL";
+            document.getElementById('ping-text').style.color = "#ef4444";
+        }, 5000); // Si no llega nada en 5 segundos, declaramos muerte
     });
     </script>
 </body>
