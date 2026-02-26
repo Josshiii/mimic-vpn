@@ -121,193 +121,193 @@
     </div>
 
     <script type="module">
-        const invoke = window.__TAURI__.core.invoke;
-        const listen = window.__TAURI__.event.listen;
-        const SERVER_URL = "wss://mimic-signal.onrender.com"; // TU URL
-        let ws;
+const invoke = window.__TAURI__.core.invoke;
+    const listen = window.__TAURI__.event.listen;
+    const SERVER_URL = "wss://mimic-signal.onrender.com"; 
+    let ws;
 
-        // --- SISTEMA DE PERFIL LOCAL ---
-        // 1. Cargar o Generar ID
-        let myId = localStorage.getItem('mimic_id');
-        if (!myId) {
-            myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
-            localStorage.setItem('mimic_id', myId);
-        }
-        document.getElementById('my-id-display').textContent = myId;
+    // --- SISTEMA DE PERFIL LOCAL (Igual que antes) ---
+    let myId = localStorage.getItem('mimic_id');
+    if (!myId) {
+        myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+        localStorage.setItem('mimic_id', myId);
+    }
+    document.getElementById('my-id-display').textContent = myId;
 
-        // 2. Cargar Nombre Guardado
-        let savedName = localStorage.getItem('mimic_name') || "Jugador";
-        document.getElementById('my-name').value = savedName;
-        document.getElementById('ui-name-display').textContent = savedName;
-        document.getElementById('ui-avatar').textContent = savedName.charAt(0).toUpperCase();
+    let savedName = localStorage.getItem('mimic_name') || "Jugador";
+    document.getElementById('my-name').value = savedName;
+    document.getElementById('ui-name-display').textContent = savedName;
+    document.getElementById('ui-avatar').textContent = savedName.charAt(0).toUpperCase();
 
-        // 3. Cargar Lista de Amigos [{id: '...', name: '...'}, ...]
-        let friends = JSON.parse(localStorage.getItem('mimic_friends')) || [];
+    let friends = JSON.parse(localStorage.getItem('mimic_friends')) || [];
 
-        // Guardar nombre al cambiar
-        document.getElementById('my-name').addEventListener('input', (e) => {
-            localStorage.setItem('mimic_name', e.target.value);
-            document.getElementById('ui-name-display').textContent = e.target.value;
-            document.getElementById('ui-avatar').textContent = e.target.value.charAt(0).toUpperCase();
-            if(ws && ws.readyState === 1) sendLogin(); // Actualizar en servidor
-        });
+    document.getElementById('my-name').addEventListener('input', (e) => {
+        localStorage.setItem('mimic_name', e.target.value);
+        document.getElementById('ui-name-display').textContent = e.target.value;
+        document.getElementById('ui-avatar').textContent = e.target.value.charAt(0).toUpperCase();
+        if(ws && ws.readyState === 1) sendLogin(); 
+    });
 
-        // --- FUNCIONES DE AMIGOS ---
-        window.copyId = () => {
-            navigator.clipboard.writeText(myId);
-            document.getElementById('log-text').textContent = "ID copiado al portapapeles";
+    window.copyId = () => {
+        navigator.clipboard.writeText(myId);
+        document.getElementById('log-text').textContent = "ID copiado";
+    };
+
+    window.addFriend = () => {
+        const input = document.getElementById('friend-code-input');
+        const code = input.value.trim().toUpperCase();
+        if (!code) return;
+        if (code === myId) { alert("No puedes agregarte a ti mismo"); return; }
+        if (friends.some(f => f.id === code)) { alert("Ya es tu amigo"); return; }
+        friends.push({ id: code, name: "Amigo (" + code + ")" });
+        localStorage.setItem('mimic_friends', JSON.stringify(friends));
+        input.value = "";
+        renderFriends([]); 
+        alert("Amigo agregado.");
+    };
+
+    // --- RED ---
+    function connect() {
+        document.getElementById('server-status').textContent = "Conectando...";
+        ws = new WebSocket(SERVER_URL);
+
+        ws.onopen = () => {
+            document.getElementById('server-status').textContent = "EN LÍNEA";
+            document.getElementById('server-status').style.color = "#a4d007";
+            sendLogin();
         };
 
-        window.addFriend = () => {
-            const input = document.getElementById('friend-code-input');
-            const code = input.value.trim().toUpperCase();
-            if (!code) return;
-            if (code === myId) { alert("No puedes agregarte a ti mismo"); return; }
-            if (friends.some(f => f.id === code)) { alert("Ya es tu amigo"); return; }
-
-            // Agregamos el amigo (Inicialmente sin nombre, se actualizará al verlo online)
-            friends.push({ id: code, name: "Amigo (" + code + ")" });
-            localStorage.setItem('mimic_friends', JSON.stringify(friends));
-            input.value = "";
-            renderFriends([]); // Renderizar de inmediato
-            alert("Amigo agregado. Cuando se conecte, verás su estado.");
-        };
-
-        // --- RED ---
-        function connect() {
-            document.getElementById('server-status').textContent = "Conectando...";
-            ws = new WebSocket(SERVER_URL);
-
-            ws.onopen = () => {
-                document.getElementById('server-status').textContent = "EN LÍNEA";
-                document.getElementById('server-status').style.color = "#a4d007";
-                sendLogin();
-            };
-
-            ws.onmessage = (e) => {
-                const msg = JSON.parse(e.data);
-                
-                if (msg.type === 'STATE_UPDATE') {
-                    renderLobbies(msg.lobbies);
-                    renderFriends(msg.players); // Cruzar datos con lista online
-                }
-                
-                if (msg.type === 'MATCH') {
-                    startTunnel(msg.peer_ip, msg.peer_port, msg.role);
-                }
-            };
-
-            ws.onclose = () => setTimeout(connect, 3000);
-        }
-
-        function sendLogin() {
-            const name = document.getElementById('my-name').value;
-            ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: name }));
-        }
-
-        // --- RENDERIZADO ---
-        function renderFriends(onlinePlayers) {
-            const listEl = document.getElementById('friends-list');
-            listEl.innerHTML = "";
-
-            if (friends.length === 0) {
-                listEl.innerHTML = "<div style='color:#555; font-size:10px; text-align:center; margin-top:20px;'>Copia tu ID y pásaselo a tus amigos</div>";
-                return;
+        ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            
+            if (msg.type === 'STATE_UPDATE') {
+                renderLobbies(msg.lobbies);
+                renderFriends(msg.players);
             }
-
-            friends.forEach(friend => {
-                // Buscamos si este amigo está online en la lista del servidor
-                const onlineData = onlinePlayers.find(p => p.id === friend.id);
-                
-                let statusClass = "";
-                let statusText = "Offline";
-                
-                // Si está online, actualizamos su nombre real y estado
-                if (onlineData) {
-                    friend.name = onlineData.name; // Actualizar nombre localmente
-                    statusClass = onlineData.status === "Jugando" ? "playing" : "online";
-                    statusText = onlineData.status === "Jugando" ? onlineData.game : "En Línea";
-                }
-
-                const html = `
-                    <div class="friend-item">
-                        <div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div>
-                        <div class="f-info">
-                            <span class="f-name ${statusClass}">${friend.name}</span>
-                            <span class="f-status ${statusClass}">${statusText}</span>
-                        </div>
-                    </div>
-                `;
-                listEl.innerHTML += html;
-            });
-            // Guardamos nombres actualizados
-            localStorage.setItem('mimic_friends', JSON.stringify(friends));
-        }
-
-        function renderLobbies(lobbies) {
-            const list = document.getElementById('lobby-list');
-            list.innerHTML = "";
-            const codes = Object.keys(lobbies);
             
-            if(codes.length === 0) {
-                list.innerHTML = "<div style='text-align:center; color:#555; margin-top:40px;'>No hay salas públicas</div>";
-                return;
+            if (msg.type === 'MATCH') {
+                // RECIBIMOS LA CLAVE DE ENCRIPTACIÓN AQUÍ
+                startTunnel(msg.peer_ip, msg.peer_port, msg.role, msg.key);
             }
-
-            codes.forEach(code => {
-                const l = lobbies[code];
-                const html = `
-                    <div class="lobby-card">
-                        <div>
-                            <div style="font-weight:bold; color:#fff;">${l.gameName}</div>
-                            <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
-                        </div>
-                        <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
-                    </div>
-                `;
-                list.innerHTML += html;
-            });
-        }
-
-        // --- ACCIONES ---
-        document.getElementById('btn-host').addEventListener('click', () => {
-            const code = Math.random().toString(36).substring(7);
-            const name = document.getElementById('my-name').value;
-            const game = document.getElementById('my-game').value;
-            const ver = document.getElementById('my-version').value;
-            const port = document.getElementById('puerto-local').value;
-
-            ws.send(JSON.stringify({
-                type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port
-            }));
-            
-            document.getElementById('log-text').textContent = "Sala creada. Esperando...";
-            document.getElementById('btn-host').disabled = true;
-        });
-
-        window.join = (code) => {
-            const port = document.getElementById('puerto-local').value;
-            ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
         };
 
-        async function startTunnel(ip, port, role) {
-            document.getElementById('log-text').textContent = role === 'HOST' ? "¡JUGADOR CONECTADO!" : "¡CONECTADO AL HOST!";
-            document.getElementById('log-text').style.color = "#a4d007";
-            
-            try {
-                await invoke("conectar_tunel", { 
-                    ipDestino: ip + ":" + port, 
-                    puertoLocal: document.getElementById('puerto-local').value,
-                    ipVirtual: document.getElementById('ip-virtual').value 
-                });
-            } catch (e) { console.error(e); }
-        }
+        ws.onclose = () => setTimeout(connect, 3000);
+    }
 
-        connect();
-        listen('trafico-entrada', () => {
-            const led = document.getElementById('traffic-led');
-            led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
+    function sendLogin() {
+        const name = document.getElementById('my-name').value;
+        ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: name }));
+    }
+
+    // --- RENDERIZADO (Igual que antes) ---
+    function renderFriends(onlinePlayers) {
+        const listEl = document.getElementById('friends-list');
+        listEl.innerHTML = "";
+        if (friends.length === 0) {
+            listEl.innerHTML = "<div style='color:#555; font-size:10px; text-align:center; margin-top:20px;'>Agrega amigos con su ID</div>";
+            return;
+        }
+        friends.forEach(friend => {
+            const onlineData = onlinePlayers.find(p => p.id === friend.id);
+            let statusClass = "";
+            let statusText = "Offline";
+            if (onlineData) {
+                friend.name = onlineData.name;
+                statusClass = onlineData.status === "Jugando" ? "playing" : "online";
+                statusText = onlineData.status === "Jugando" ? onlineData.game : "En Línea";
+            }
+            const html = `
+                <div class="friend-item">
+                    <div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div>
+                    <div class="f-info">
+                        <span class="f-name ${statusClass}">${friend.name}</span>
+                        <span class="f-status ${statusClass}">${statusText}</span>
+                    </div>
+                </div>
+            `;
+            listEl.innerHTML += html;
         });
+        localStorage.setItem('mimic_friends', JSON.stringify(friends));
+    }
+
+    function renderLobbies(lobbies) {
+        const list = document.getElementById('lobby-list');
+        list.innerHTML = "";
+        const codes = Object.keys(lobbies);
+        if(codes.length === 0) {
+            list.innerHTML = "<div style='text-align:center; color:#555; margin-top:40px;'>No hay salas públicas</div>";
+            return;
+        }
+        codes.forEach(code => {
+            const l = lobbies[code];
+            const html = `
+                <div class="lobby-card">
+                    <div>
+                        <div style="font-weight:bold; color:#fff;">${l.gameName}</div>
+                        <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
+                    </div>
+                    <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
+                </div>
+            `;
+            list.innerHTML += html;
+        });
+    }
+
+    // --- ACCIONES CRÍTICAS ACTUALIZADAS ---
+    
+    // AL CREAR SALA: Generamos una llave y la enviamos al servidor
+    document.getElementById('btn-host').addEventListener('click', async () => {
+        const code = Math.random().toString(36).substring(7);
+        const name = document.getElementById('my-name').value;
+        const game = document.getElementById('my-game').value;
+        const ver = document.getElementById('my-version').value;
+        const port = document.getElementById('puerto-local').value;
+
+        // 1. Generar Clave Militar en Rust
+        const secureKey = await invoke("generar_clave_segura");
+
+        // 2. Guardarla en memoria temporalmente (somos el Host)
+        window.currentKey = secureKey;
+
+        // 3. Enviarla al servidor (viaja por TLS/SSL seguro)
+        // Nota: Solo se la daremos al cliente que se una
+        ws.send(JSON.stringify({
+            type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port, key: secureKey
+        }));
+        
+        document.getElementById('log-text').textContent = "Sala Segura Creada.";
+        document.getElementById('btn-host').disabled = true;
+    });
+
+    window.join = (code) => {
+        const port = document.getElementById('puerto-local').value;
+        ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
+    };
+
+    // AL CONECTAR: Usamos la clave recibida
+    async function startTunnel(ip, port, role, receivedKey) {
+        document.getElementById('log-text').textContent = "Estableciendo Enlace Seguro...";
+        document.getElementById('log-text').style.color = "#a4d007";
+        
+        // Si somos HOST, usamos la clave que generamos. Si somos CLIENT, usamos la recibida.
+        const keyToUse = role === 'HOST' ? window.currentKey : receivedKey;
+
+        try {
+            await invoke("conectar_tunel", { 
+                ipDestino: ip + ":" + port, 
+                puertoLocal: document.getElementById('puerto-local').value,
+                ipVirtual: document.getElementById('ip-virtual').value,
+                claveB64: keyToUse // <--- Pasamos la clave a Rust
+            });
+            document.getElementById('log-text').textContent = "🔒 CONEXIÓN ENCRIPTADA (ChaCha20)";
+        } catch (e) { console.error(e); }
+    }
+
+    connect();
+    listen('trafico-entrada', () => {
+        const led = document.getElementById('traffic-led');
+        led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
+    });
     </script>
 </body>
 </html>
