@@ -1,111 +1,378 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="es">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mimic Hub</title>
-<style>
-  :root { --bg: #1b2838; --panel: #171a21; --accent: #66c0f4; --green: #a4d007; --online: #57cbff; }
-  body { background: var(--bg); color: #c6d4df; font-family: 'Inter', sans-serif; display: flex; height: 100vh; margin: 0; }
-  
-  .sidebar { width: 240px; background: var(--panel); padding: 15px; border-right: 1px solid #000; display: flex; flex-direction: column; }
-  .main { flex: 1; padding: 20px; overflow-y: auto; background: rgba(0,0,0,0.2); }
-  .friends-list { width: 220px; background: #121418; padding: 15px; border-left: 1px solid #000; }
-
-  /* ESTILO AMIGOS */
-  .friend-item { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 12px; }
-  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
-  .status-dot.online { background: var(--online); box-shadow: 0 0 5px var(--online); }
-  .friend-name { font-weight: bold; color: #fff; }
-  .friend-game { color: var(--green); font-size: 10px; display: block; }
-
-  /* TARJETAS DE LOBBY */
-  .lobby-card { background: #2a475e; padding: 15px; border-radius: 4px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid var(--green); }
-  .btn-join { background: var(--green); color: #000; border: none; padding: 8px 15px; font-weight: bold; cursor: pointer; border-radius: 2px; }
-</style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
     
-      /* BARRA INFERIOR */
-      .status-bar { height: 30px; background: #000; display: flex; align-items: center; padding: 0 10px; font-size: 11px; justify-content: space-between; }
-      .oculto { display: none; }
+    <style>
+        /* RESET Y BASE */
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: 'Inter', sans-serif; }
+        
+        body { 
+            background-color: #1b2838; /* Fondo Steam */
+            color: #c6d4df; 
+            height: 100vh; 
+            width: 100vw; 
+            overflow: hidden; 
+            display: flex;
+        }
+
+        /* --- COLUMNA 1: SIDEBAR IZQUIERDA (PERFIL) --- */
+        .sidebar {
+            width: 260px;
+            background-color: #171a21;
+            border-right: 1px solid #000;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0; /* No encoger */
+        }
+
+        h2 { color: #fff; font-size: 18px; letter-spacing: 2px; margin-bottom: 30px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
+        .steam-logo { width: 24px; opacity: 0.8; }
+
+        label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 6px; display: block; text-transform: uppercase; }
+        
+        input {
+            width: 100%;
+            background: #101216;
+            border: 1px solid #3d4450;
+            color: #fff;
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+            font-size: 13px;
+            outline: none;
+            transition: 0.2s;
+        }
+        input:focus { border-color: #66c0f4; background: #1a1d23; }
+
+        .btn-host {
+            margin-top: auto;
+            background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%);
+            color: white;
+            border: none;
+            padding: 15px;
+            font-weight: bold;
+            border-radius: 4px;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            box-shadow: 0 4px 15px rgba(6, 191, 255, 0.2);
+        }
+        .btn-host:hover { filter: brightness(1.1); transform: translateY(-1px); }
+        .btn-host:disabled { filter: grayscale(1); cursor: wait; }
+
+        /* --- COLUMNA 2: PRINCIPAL (LISTA DE SALAS) --- */
+        .main-content {
+            flex: 1; /* Ocupa el espacio sobrante */
+            background: radial-gradient(circle at top center, #2a475e 0%, #1b2838 60%);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: hidden;
+        }
+
+        .section-header {
+            font-size: 14px;
+            color: #8f98a0;
+            border-bottom: 1px solid #3d4450;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .lobby-list {
+            flex: 1;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        /* Scrollbar personalizada */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #171a21; }
+        ::-webkit-scrollbar-thumb { background: #3d4450; border-radius: 4px; }
+
+        .lobby-card {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-left: 4px solid #a4d007; /* Verde Steam */
+            transition: 0.2s;
+        }
+        .lobby-card:hover { background: rgba(255, 255, 255, 0.05); }
+
+        .game-title { font-weight: bold; color: #c6d4df; font-size: 14px; }
+        .game-meta { font-size: 11px; color: #8f98a0; margin-top: 2px; }
+        .host-name { color: #66c0f4; }
+
+        .btn-join {
+            background: #3d4450;
+            color: #fff;
+            border: none;
+            padding: 6px 16px;
+            font-size: 11px;
+            font-weight: bold;
+            border-radius: 2px;
+            cursor: pointer;
+        }
+        .btn-join:hover { background: #a4d007; color: #000; }
+
+        /* --- COLUMNA 3: AMIGOS (DERECHA) --- */
+        .friends-panel {
+            width: 220px;
+            background: #171a21;
+            border-left: 1px solid #000;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .friend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #222;
+        }
+
+        .avatar {
+            width: 32px; height: 32px;
+            background: #3d4450;
+            border-radius: 4px;
+            display: flex; justify-content: center; align-items: center;
+            font-weight: bold; color: #fff; font-size: 14px;
+            border: 2px solid #66c0f4; /* Azul jugando */
+        }
+        .avatar.menu { border-color: #8f98a0; } /* Gris offline/menu */
+
+        .friend-info { display: flex; flex-direction: column; overflow: hidden; }
+        .friend-name { font-size: 13px; color: #66c0f4; font-weight: bold; white-space: nowrap; }
+        .friend-status { font-size: 10px; color: #a4d007; white-space: nowrap; }
+        .friend-status.menu { color: #8f98a0; }
+
+        /* DATOS OCULTOS Y ESTADO */
+        .hidden-data { display: none; }
+        .status-bar {
+            position: absolute; bottom: 0; left: 0; right: 0;
+            height: 25px; background: #000;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 10px; font-size: 10px; color: #555;
+            pointer-events: none;
+        }
     </style>
-  </head>
-  
+</head>
 <body>
-  <div class="sidebar">
-    <h2>MIMIC HUB</h2>
-    <label>MI NICKNAME</label>
-    <input id="my-name" value="Sasha">
-    <label>JUEGO ACTUAL</label>
-    <input id="my-game" value="Halo CE">
-    <button id="btn-host" class="host-btn" style="margin-top:20px; background: var(--accent); color:#000; border:none; padding:10px; font-weight:bold; cursor:pointer;">CREAR SALA PÚBLICA</button>
-  </div>
 
-  <div class="main">
-    <h3 style="margin-bottom:15px; font-size:14px; color:var(--accent);">PARTIDAS DISPONIBLES</h3>
-    <div id="lobby-container"></div>
-  </div>
+    <div class="sidebar">
+        <h2>MIMIC HUB</h2>
+        
+        <label>TU NICKNAME</label>
+        <input id="my-name" value="Sasha">
 
-  <div class="friends-list">
-    <h3 style="font-size: 11px; color: #555; margin-bottom: 15px; letter-spacing: 1px;">AMIGOS EN LÍNEA</h3>
-    <div id="friends-container"></div>
-  </div>
+        <label>JUEGO ACTUAL</label>
+        <input id="my-game" value="Halo CE">
 
-  <script type="module">
-    const invoke = window.__TAURI__.core.invoke;
-    let ws;
-    const SERVER_URL = "wss://mimic-signal.onrender.com";
+        <label>VERSIÓN / MAPA</label>
+        <input id="my-version" value="v1.0 - Slayer">
 
-    function connect() {
-      ws = new WebSocket(SERVER_URL);
-      ws.onopen = () => {
-        // Al conectar, nos registramos socialmente
-        ws.send(JSON.stringify({ type: 'HELLO', name: document.getElementById('my-name').value }));
-      };
+        <button id="btn-host" class="btn-host">CREAR SALA PÚBLICA</button>
+    </div>
 
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'SOCIAL_UPDATE') {
-          updateUI(msg.players, msg.lobbies);
-        }
-        if (msg.type === 'MATCH_FOUND') {
-          // Lógica de inicio de túnel (mantener la que ya tienes)
-          console.log("Conectando a:", msg.peer_ip);
-        }
-      };
-    }
-
-    function updateUI(players, lobbies) {
-      // Actualizar Lista de Amigos
-      const fContainer = document.getElementById('friends-container');
-      fContainer.innerHTML = players.map(p => `
-        <div class="friend-item">
-          <div class="status-dot online"></div>
-          <div>
-            <span class="friend-name">${p.name}</span>
-            <span class="friend-game">${p.game}</span>
-          </div>
+    <div class="main-content">
+        <div class="section-header">
+            <span>SALAS DE JUEGO DISPONIBLES</span>
+            <span id="server-status" style="color: #66c0f4;">Conectando...</span>
         </div>
-      `).join('');
 
-      // Actualizar Lista de Lobbies
-      const lContainer = document.getElementById('lobby-container');
-      const codes = Object.keys(lobbies);
-      lContainer.innerHTML = codes.map(code => `
-        <div class="lobby-card">
-          <div>
-            <div style="font-weight:bold; color:#fff;">${lobbies[code].gameName}</div>
-            <div style="font-size:11px; color:var(--accent);">Host: ${lobbies[code].hostName}</div>
-          </div>
-          <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
+        <div id="lobby-list" class="lobby-list">
+            <div style="text-align: center; color: #555; margin-top: 50px;">
+                Buscando partidas...
+            </div>
         </div>
-      `).join('');
-    }
+    </div>
 
-    window.join = (code) => {
-      ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: "5000" }));
-    };
+    <div class="friends-panel">
+        <div class="section-header" style="font-size: 11px;">AMIGOS EN LÍNEA</div>
+        <div id="friends-list">
+            </div>
+    </div>
 
-    connect();
-  </script>
+    <div class="hidden-data">
+        <input id="ip-virtual" value="10.10.10.2">
+        <input id="puerto-local" value="5000">
+    </div>
+
+    <div class="status-bar">
+        <span id="connection-log">Ready</span>
+        <div id="traffic-led" style="width: 8px; height: 8px; background: #333; border-radius: 50%;"></div>
+    </div>
+
+    <script type="module">
+        const invoke = window.__TAURI__.core.invoke;
+        const listen = window.__TAURI__.event.listen;
+        
+        // --- VARIABLES ---
+        const SERVER_URL = "wss://mimic-signal.onrender.com"; // Asegúrate que esta URL es la correcta
+        let ws;
+
+        // Elementos UI
+        const lobbyListEl = document.getElementById('lobby-list');
+        const friendsListEl = document.getElementById('friends-list');
+        const statusEl = document.getElementById('server-status');
+        const logEl = document.getElementById('connection-log');
+        const btnHost = document.getElementById('btn-host');
+
+        // --- CONEXIÓN AL SERVIDOR ---
+        function connect() {
+            statusEl.textContent = "Conectando...";
+            ws = new WebSocket(SERVER_URL);
+
+            ws.onopen = () => {
+                statusEl.textContent = "EN LÍNEA";
+                statusEl.style.color = "#a4d007";
+                
+                // Enviar saludo para aparecer en la lista de amigos
+                sendHello();
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const msg = JSON.parse(event.data);
+                    
+                    if (msg.type === 'SOCIAL_UPDATE') {
+                        renderUI(msg.players, msg.lobbies);
+                    }
+                    if (msg.type === 'MATCH_FOUND') {
+                        startTunnel(msg.peer_ip, msg.peer_port, msg.role);
+                    }
+                } catch(e) { console.error(e); }
+            };
+
+            ws.onclose = () => {
+                statusEl.textContent = "OFFLINE (Reintentando...)";
+                statusEl.style.color = "red";
+                setTimeout(connect, 3000);
+            };
+        }
+
+        function sendHello() {
+            const name = document.getElementById('my-name').value;
+            if(ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'HELLO', name: name }));
+            }
+        }
+
+        // --- RENDERIZADO DE INTERFAZ ---
+        function renderUI(players, lobbies) {
+            // 1. Renderizar Amigos
+            friendsListEl.innerHTML = "";
+            if(players && players.length > 0) {
+                players.forEach(p => {
+                    const isPlaying = p.game !== "En el Menú";
+                    const statusClass = isPlaying ? "playing" : "menu";
+                    const statusText = isPlaying ? p.game : "En el Menú";
+                    
+                    const html = `
+                        <div class="friend-item">
+                            <div class="avatar ${statusClass}">${p.name.charAt(0).toUpperCase()}</div>
+                            <div class="friend-info">
+                                <span class="friend-name">${p.name}</span>
+                                <span class="friend-status ${statusClass}">${statusText}</span>
+                            </div>
+                        </div>
+                    `;
+                    friendsListEl.innerHTML += html;
+                });
+            } else {
+                friendsListEl.innerHTML = "<div style='color:#555; font-size:10px; text-align:center;'>Nadie conectado</div>";
+            }
+
+            // 2. Renderizar Salas
+            lobbyListEl.innerHTML = "";
+            const codes = Object.keys(lobbies);
+            if(codes.length > 0) {
+                codes.forEach(code => {
+                    const l = lobbies[code];
+                    const html = `
+                        <div class="lobby-card">
+                            <div>
+                                <div class="game-title">${l.gameName}</div>
+                                <div class="game-meta">${l.gameVer}</div>
+                                <div style="font-size:11px; color:#555;">Host: <span class="host-name">${l.hostName}</span></div>
+                            </div>
+                            <button class="btn-join" onclick="window.joinGame('${code}')">UNIRSE</button>
+                        </div>
+                    `;
+                    lobbyListEl.innerHTML += html;
+                });
+            } else {
+                lobbyListEl.innerHTML = "<div style='text-align:center; color:#555; margin-top:50px;'>No hay partidas públicas.<br>¡Crea una a la izquierda!</div>";
+            }
+        }
+
+        // --- ACCIONES DEL USUARIO ---
+        
+        // Crear Sala
+        btnHost.addEventListener('click', () => {
+            const name = document.getElementById('my-name').value;
+            const game = document.getElementById('my-game').value;
+            const ver = document.getElementById('my-version').value;
+            const port = document.getElementById('puerto-local').value;
+            const code = Math.random().toString(36).substring(7); // Código random
+
+            ws.send(JSON.stringify({
+                type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port
+            }));
+
+            btnHost.disabled = true;
+            btnHost.textContent = "ESPERANDO JUGADOR...";
+            logEl.textContent = "Sala creada. Esperando conexión...";
+        });
+
+        // Unirse (Global)
+        window.joinGame = (code) => {
+            const port = document.getElementById('puerto-local').value;
+            ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
+            logEl.textContent = "Intentando unirse...";
+        };
+
+        // --- INICIAR TÚNEL (RUST) ---
+        async function startTunnel(ip, port, role) {
+            logEl.textContent = role === 'HOST' ? "¡JUGADOR CONECTADO!" : "¡CONECTADO AL HOST!";
+            logEl.style.color = "#a4d007";
+            
+            const ipVirtual = document.getElementById('ip-virtual').value;
+            const puertoLocal = document.getElementById('puerto-local').value;
+
+            try {
+                await invoke("conectar_tunel", { 
+                    ipDestino: ip + ":" + port,
+                    puertoLocal: puertoLocal,
+                    ipVirtual: ipVirtual
+                });
+            } catch (e) {
+                logEl.textContent = "Error: " + e;
+                logEl.style.color = "red";
+            }
+        }
+
+        // --- INICIO ---
+        connect();
+        
+        // Luces
+        listen('trafico-entrada', () => {
+            const led = document.getElementById('traffic-led');
+            led.style.background = "#a4d007";
+            setTimeout(()=> led.style.background = "#333", 50);
+        });
+
+    </script>
 </body>
 </html>
