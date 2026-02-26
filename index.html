@@ -5,374 +5,309 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mimic Hub</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
-        /* RESET Y BASE */
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: 'Inter', sans-serif; }
+        body { background-color: #1b2838; color: #c6d4df; height: 100vh; width: 100vw; overflow: hidden; display: flex; }
+
+        /* --- IZQUIERDA: PERFIL --- */
+        .sidebar { width: 280px; background-color: #171a21; border-right: 1px solid #000; padding: 20px; display: flex; flex-direction: column; }
         
-        body { 
-            background-color: #1b2838; /* Fondo Steam */
-            color: #c6d4df; 
-            height: 100vh; 
-            width: 100vw; 
-            overflow: hidden; 
-            display: flex;
-        }
-
-        /* --- COLUMNA 1: SIDEBAR IZQUIERDA (PERFIL) --- */
-        .sidebar {
-            width: 260px;
-            background-color: #171a21;
-            border-right: 1px solid #000;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            flex-shrink: 0; /* No encoger */
-        }
-
-        h2 { color: #fff; font-size: 18px; letter-spacing: 2px; margin-bottom: 30px; font-weight: 800; display: flex; align-items: center; gap: 10px; }
-        .steam-logo { width: 24px; opacity: 0.8; }
-
-        label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 6px; display: block; text-transform: uppercase; }
+        .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; }
+        .my-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #66c0f4, #1b2838); border-radius: 50%; margin: 0 auto 10px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; border: 2px solid #66c0f4; }
         
-        input {
-            width: 100%;
-            background: #101216;
-            border: 1px solid #3d4450;
-            color: #fff;
-            padding: 10px;
-            margin-bottom: 20px;
-            border-radius: 4px;
-            font-size: 13px;
-            outline: none;
-            transition: 0.2s;
-        }
-        input:focus { border-color: #66c0f4; background: #1a1d23; }
+        .my-id-box { background: #000; padding: 5px; font-family: monospace; font-size: 11px; color: #a4d007; border-radius: 4px; margin-top: 5px; cursor: pointer; }
+        .my-id-box:hover { background: #222; }
+        .copy-tooltip { font-size: 9px; color: #666; margin-top: 2px; }
 
-        .btn-host {
-            margin-top: auto;
-            background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%);
-            color: white;
-            border: none;
-            padding: 15px;
-            font-weight: bold;
-            border-radius: 4px;
-            cursor: pointer;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            box-shadow: 0 4px 15px rgba(6, 191, 255, 0.2);
-        }
-        .btn-host:hover { filter: brightness(1.1); transform: translateY(-1px); }
-        .btn-host:disabled { filter: grayscale(1); cursor: wait; }
+        label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 5px; display: block; margin-top: 15px; }
+        input { width: 100%; background: #101216; border: 1px solid #3d4450; color: #fff; padding: 8px; border-radius: 4px; font-size: 13px; outline: none; }
+        input:focus { border-color: #66c0f4; }
 
-        /* --- COLUMNA 2: PRINCIPAL (LISTA DE SALAS) --- */
-        .main-content {
-            flex: 1; /* Ocupa el espacio sobrante */
-            background: radial-gradient(circle at top center, #2a475e 0%, #1b2838 60%);
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            overflow-y: hidden;
-        }
+        .btn-host { margin-top: 20px; background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%); color: white; border: none; padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; }
+        .btn-host:hover { filter: brightness(1.1); }
+        .btn-host:disabled { filter: grayscale(1); }
 
-        .section-header {
-            font-size: 14px;
-            color: #8f98a0;
-            border-bottom: 1px solid #3d4450;
-            padding-bottom: 10px;
-            margin-bottom: 15px;
-            display: flex;
-            justify-content: space-between;
-        }
-
-        .lobby-list {
-            flex: 1;
-            overflow-y: auto;
-            padding-right: 5px;
-        }
-
-        /* Scrollbar personalizada */
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #171a21; }
-        ::-webkit-scrollbar-thumb { background: #3d4450; border-radius: 4px; }
-
-        .lobby-card {
-            background: rgba(0, 0, 0, 0.2);
-            padding: 12px 15px;
-            margin-bottom: 8px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-left: 4px solid #a4d007; /* Verde Steam */
-            transition: 0.2s;
-        }
-        .lobby-card:hover { background: rgba(255, 255, 255, 0.05); }
-
-        .game-title { font-weight: bold; color: #c6d4df; font-size: 14px; }
-        .game-meta { font-size: 11px; color: #8f98a0; margin-top: 2px; }
-        .host-name { color: #66c0f4; }
-
-        .btn-join {
-            background: #3d4450;
-            color: #fff;
-            border: none;
-            padding: 6px 16px;
-            font-size: 11px;
-            font-weight: bold;
-            border-radius: 2px;
-            cursor: pointer;
-        }
+        /* --- CENTRO: SALAS --- */
+        .main-content { flex: 1; background: radial-gradient(circle at top, #2a475e 0%, #1b2838 70%); padding: 20px; display: flex; flex-direction: column; }
+        .section-title { font-size: 14px; color: #fff; border-bottom: 1px solid #3d4450; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
+        
+        .lobby-list { flex: 1; overflow-y: auto; }
+        .lobby-card { background: rgba(0,0,0,0.2); padding: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #a4d007; transition: 0.2s; }
+        .lobby-card:hover { background: rgba(255,255,255,0.05); }
+        .btn-join { background: #3d4450; color: #fff; border: none; padding: 5px 15px; font-size: 11px; font-weight: bold; border-radius: 2px; cursor: pointer; }
         .btn-join:hover { background: #a4d007; color: #000; }
 
-        /* --- COLUMNA 3: AMIGOS (DERECHA) --- */
-        .friends-panel {
-            width: 220px;
-            background: #171a21;
-            border-left: 1px solid #000;
-            padding: 15px;
-            display: flex;
-            flex-direction: column;
-        }
+        /* --- DERECHA: AMIGOS --- */
+        .friends-panel { width: 240px; background: #171a21; border-left: 1px solid #000; padding: 15px; display: flex; flex-direction: column; }
+        
+        .add-friend-box { display: flex; gap: 5px; margin-bottom: 15px; }
+        .add-friend-box input { margin: 0; font-size: 11px; }
+        .btn-add { background: #3d4450; border: 1px solid #555; color: white; width: 30px; cursor: pointer; border-radius: 4px; }
+        .btn-add:hover { background: #a4d007; color: black; border-color: #a4d007; }
 
-        .friend-item {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 8px 0;
-            border-bottom: 1px solid #222;
-        }
+        .friends-list { flex: 1; overflow-y: auto; }
+        
+        .friend-item { display: flex; align-items: center; gap: 10px; padding: 8px 5px; border-bottom: 1px solid #222; }
+        .f-avatar { width: 32px; height: 32px; background: #333; border-radius: 4px; display: flex; justify-content: center; align-items: center; font-weight: bold; color: #888; border: 2px solid #444; position: relative; }
+        .f-avatar.online { border-color: #66c0f4; color: white; background: #2a475e; }
+        .f-avatar.playing { border-color: #a4d007; color: white; background: #2a475e; }
+        
+        .f-info { display: flex; flex-direction: column; }
+        .f-name { font-size: 13px; font-weight: bold; color: #888; }
+        .f-name.online { color: #66c0f4; }
+        .f-status { font-size: 10px; color: #555; }
+        .f-status.online { color: #66c0f4; }
+        .f-status.playing { color: #a4d007; }
 
-        .avatar {
-            width: 32px; height: 32px;
-            background: #3d4450;
-            border-radius: 4px;
-            display: flex; justify-content: center; align-items: center;
-            font-weight: bold; color: #fff; font-size: 14px;
-            border: 2px solid #66c0f4; /* Azul jugando */
-        }
-        .avatar.menu { border-color: #8f98a0; } /* Gris offline/menu */
-
-        .friend-info { display: flex; flex-direction: column; overflow: hidden; }
-        .friend-name { font-size: 13px; color: #66c0f4; font-weight: bold; white-space: nowrap; }
-        .friend-status { font-size: 10px; color: #a4d007; white-space: nowrap; }
-        .friend-status.menu { color: #8f98a0; }
-
-        /* DATOS OCULTOS Y ESTADO */
-        .hidden-data { display: none; }
-        .status-bar {
-            position: absolute; bottom: 0; left: 0; right: 0;
-            height: 25px; background: #000;
-            display: flex; align-items: center; justify-content: space-between;
-            padding: 0 10px; font-size: 10px; color: #555;
-            pointer-events: none;
-        }
+        /* ESTADO */
+        .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
     <div class="sidebar">
-        <h2>MIMIC HUB</h2>
-        
-        <label>TU NICKNAME</label>
-        <input id="my-name" value="Sasha">
+        <div class="profile-card">
+            <div class="my-avatar" id="ui-avatar">?</div>
+            <div style="font-size: 14px; font-weight: bold; color: white;" id="ui-name-display">Jugador</div>
+            
+            <div style="margin-top: 10px; font-size: 10px; color: #888;">TU CÓDIGO DE AMIGO:</div>
+            <div class="my-id-box" id="my-id-display" onclick="copyId()">CARGANDO...</div>
+            <div class="copy-tooltip">Clic para copiar</div>
+        </div>
 
-        <label>JUEGO ACTUAL</label>
+        <label>TU NOMBRE</label>
+        <input id="my-name" placeholder="Tu Nickname">
+
+        <label>JUEGO</label>
         <input id="my-game" value="Halo CE">
+        <label>VERSIÓN</label>
+        <input id="my-version" value="v1.0">
 
-        <label>VERSIÓN / MAPA</label>
-        <input id="my-version" value="v1.0 - Slayer">
-
-        <button id="btn-host" class="btn-host">CREAR SALA PÚBLICA</button>
+        <button id="btn-host" class="btn-host">CREAR SALA</button>
     </div>
 
     <div class="main-content">
-        <div class="section-header">
-            <span>SALAS DE JUEGO DISPONIBLES</span>
-            <span id="server-status" style="color: #66c0f4;">Conectando...</span>
+        <div class="section-title">
+            <span>SALAS PÚBLICAS</span>
+            <span id="server-status" style="font-size:11px;">Conectando...</span>
         </div>
-
         <div id="lobby-list" class="lobby-list">
-            <div style="text-align: center; color: #555; margin-top: 50px;">
-                Buscando partidas...
             </div>
-        </div>
     </div>
 
     <div class="friends-panel">
-        <div class="section-header" style="font-size: 11px;">AMIGOS EN LÍNEA</div>
-        <div id="friends-list">
+        <div class="section-title" style="font-size: 12px;">AMIGOS</div>
+        
+        <div class="add-friend-box">
+            <input id="friend-code-input" placeholder="Pegar ID de amigo...">
+            <button class="btn-add" onclick="addFriend()">+</button>
+        </div>
+
+        <div id="friends-list" class="friends-list">
             </div>
     </div>
 
-    <div class="hidden-data">
+    <div class="hidden">
         <input id="ip-virtual" value="10.10.10.2">
         <input id="puerto-local" value="5000">
     </div>
 
     <div class="status-bar">
-        <span id="connection-log">Ready</span>
-        <div id="traffic-led" style="width: 8px; height: 8px; background: #333; border-radius: 50%;"></div>
+        <span id="log-text">Iniciando sistema...</span>
+        <div id="traffic-led" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
     </div>
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke;
         const listen = window.__TAURI__.event.listen;
-        
-        // --- VARIABLES ---
-        const SERVER_URL = "wss://mimic-signal.onrender.com"; // Asegúrate que esta URL es la correcta
+        const SERVER_URL = "wss://mimic-signal.onrender.com"; // TU URL
         let ws;
 
-        // Elementos UI
-        const lobbyListEl = document.getElementById('lobby-list');
-        const friendsListEl = document.getElementById('friends-list');
-        const statusEl = document.getElementById('server-status');
-        const logEl = document.getElementById('connection-log');
-        const btnHost = document.getElementById('btn-host');
+        // --- SISTEMA DE PERFIL LOCAL ---
+        // 1. Cargar o Generar ID
+        let myId = localStorage.getItem('mimic_id');
+        if (!myId) {
+            myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+            localStorage.setItem('mimic_id', myId);
+        }
+        document.getElementById('my-id-display').textContent = myId;
 
-        // --- CONEXIÓN AL SERVIDOR ---
+        // 2. Cargar Nombre Guardado
+        let savedName = localStorage.getItem('mimic_name') || "Jugador";
+        document.getElementById('my-name').value = savedName;
+        document.getElementById('ui-name-display').textContent = savedName;
+        document.getElementById('ui-avatar').textContent = savedName.charAt(0).toUpperCase();
+
+        // 3. Cargar Lista de Amigos [{id: '...', name: '...'}, ...]
+        let friends = JSON.parse(localStorage.getItem('mimic_friends')) || [];
+
+        // Guardar nombre al cambiar
+        document.getElementById('my-name').addEventListener('input', (e) => {
+            localStorage.setItem('mimic_name', e.target.value);
+            document.getElementById('ui-name-display').textContent = e.target.value;
+            document.getElementById('ui-avatar').textContent = e.target.value.charAt(0).toUpperCase();
+            if(ws && ws.readyState === 1) sendLogin(); // Actualizar en servidor
+        });
+
+        // --- FUNCIONES DE AMIGOS ---
+        window.copyId = () => {
+            navigator.clipboard.writeText(myId);
+            document.getElementById('log-text').textContent = "ID copiado al portapapeles";
+        };
+
+        window.addFriend = () => {
+            const input = document.getElementById('friend-code-input');
+            const code = input.value.trim().toUpperCase();
+            if (!code) return;
+            if (code === myId) { alert("No puedes agregarte a ti mismo"); return; }
+            if (friends.some(f => f.id === code)) { alert("Ya es tu amigo"); return; }
+
+            // Agregamos el amigo (Inicialmente sin nombre, se actualizará al verlo online)
+            friends.push({ id: code, name: "Amigo (" + code + ")" });
+            localStorage.setItem('mimic_friends', JSON.stringify(friends));
+            input.value = "";
+            renderFriends([]); // Renderizar de inmediato
+            alert("Amigo agregado. Cuando se conecte, verás su estado.");
+        };
+
+        // --- RED ---
         function connect() {
-            statusEl.textContent = "Conectando...";
+            document.getElementById('server-status').textContent = "Conectando...";
             ws = new WebSocket(SERVER_URL);
 
             ws.onopen = () => {
-                statusEl.textContent = "EN LÍNEA";
-                statusEl.style.color = "#a4d007";
+                document.getElementById('server-status').textContent = "EN LÍNEA";
+                document.getElementById('server-status').style.color = "#a4d007";
+                sendLogin();
+            };
+
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
                 
-                // Enviar saludo para aparecer en la lista de amigos
-                sendHello();
+                if (msg.type === 'STATE_UPDATE') {
+                    renderLobbies(msg.lobbies);
+                    renderFriends(msg.players); // Cruzar datos con lista online
+                }
+                
+                if (msg.type === 'MATCH') {
+                    startTunnel(msg.peer_ip, msg.peer_port, msg.role);
+                }
             };
 
-            ws.onmessage = (event) => {
-                try {
-                    const msg = JSON.parse(event.data);
-                    
-                    if (msg.type === 'SOCIAL_UPDATE') {
-                        renderUI(msg.players, msg.lobbies);
-                    }
-                    if (msg.type === 'MATCH_FOUND') {
-                        startTunnel(msg.peer_ip, msg.peer_port, msg.role);
-                    }
-                } catch(e) { console.error(e); }
-            };
-
-            ws.onclose = () => {
-                statusEl.textContent = "OFFLINE (Reintentando...)";
-                statusEl.style.color = "red";
-                setTimeout(connect, 3000);
-            };
+            ws.onclose = () => setTimeout(connect, 3000);
         }
 
-        function sendHello() {
+        function sendLogin() {
             const name = document.getElementById('my-name').value;
-            if(ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'HELLO', name: name }));
-            }
+            ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: name }));
         }
 
-        // --- RENDERIZADO DE INTERFAZ ---
-        function renderUI(players, lobbies) {
-            // 1. Renderizar Amigos
-            friendsListEl.innerHTML = "";
-            if(players && players.length > 0) {
-                players.forEach(p => {
-                    const isPlaying = p.game !== "En el Menú";
-                    const statusClass = isPlaying ? "playing" : "menu";
-                    const statusText = isPlaying ? p.game : "En el Menú";
-                    
-                    const html = `
-                        <div class="friend-item">
-                            <div class="avatar ${statusClass}">${p.name.charAt(0).toUpperCase()}</div>
-                            <div class="friend-info">
-                                <span class="friend-name">${p.name}</span>
-                                <span class="friend-status ${statusClass}">${statusText}</span>
-                            </div>
-                        </div>
-                    `;
-                    friendsListEl.innerHTML += html;
-                });
-            } else {
-                friendsListEl.innerHTML = "<div style='color:#555; font-size:10px; text-align:center;'>Nadie conectado</div>";
+        // --- RENDERIZADO ---
+        function renderFriends(onlinePlayers) {
+            const listEl = document.getElementById('friends-list');
+            listEl.innerHTML = "";
+
+            if (friends.length === 0) {
+                listEl.innerHTML = "<div style='color:#555; font-size:10px; text-align:center; margin-top:20px;'>Copia tu ID y pásaselo a tus amigos</div>";
+                return;
             }
 
-            // 2. Renderizar Salas
-            lobbyListEl.innerHTML = "";
+            friends.forEach(friend => {
+                // Buscamos si este amigo está online en la lista del servidor
+                const onlineData = onlinePlayers.find(p => p.id === friend.id);
+                
+                let statusClass = "";
+                let statusText = "Offline";
+                
+                // Si está online, actualizamos su nombre real y estado
+                if (onlineData) {
+                    friend.name = onlineData.name; // Actualizar nombre localmente
+                    statusClass = onlineData.status === "Jugando" ? "playing" : "online";
+                    statusText = onlineData.status === "Jugando" ? onlineData.game : "En Línea";
+                }
+
+                const html = `
+                    <div class="friend-item">
+                        <div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div>
+                        <div class="f-info">
+                            <span class="f-name ${statusClass}">${friend.name}</span>
+                            <span class="f-status ${statusClass}">${statusText}</span>
+                        </div>
+                    </div>
+                `;
+                listEl.innerHTML += html;
+            });
+            // Guardamos nombres actualizados
+            localStorage.setItem('mimic_friends', JSON.stringify(friends));
+        }
+
+        function renderLobbies(lobbies) {
+            const list = document.getElementById('lobby-list');
+            list.innerHTML = "";
             const codes = Object.keys(lobbies);
-            if(codes.length > 0) {
-                codes.forEach(code => {
-                    const l = lobbies[code];
-                    const html = `
-                        <div class="lobby-card">
-                            <div>
-                                <div class="game-title">${l.gameName}</div>
-                                <div class="game-meta">${l.gameVer}</div>
-                                <div style="font-size:11px; color:#555;">Host: <span class="host-name">${l.hostName}</span></div>
-                            </div>
-                            <button class="btn-join" onclick="window.joinGame('${code}')">UNIRSE</button>
-                        </div>
-                    `;
-                    lobbyListEl.innerHTML += html;
-                });
-            } else {
-                lobbyListEl.innerHTML = "<div style='text-align:center; color:#555; margin-top:50px;'>No hay partidas públicas.<br>¡Crea una a la izquierda!</div>";
+            
+            if(codes.length === 0) {
+                list.innerHTML = "<div style='text-align:center; color:#555; margin-top:40px;'>No hay salas públicas</div>";
+                return;
             }
+
+            codes.forEach(code => {
+                const l = lobbies[code];
+                const html = `
+                    <div class="lobby-card">
+                        <div>
+                            <div style="font-weight:bold; color:#fff;">${l.gameName}</div>
+                            <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
+                        </div>
+                        <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
+                    </div>
+                `;
+                list.innerHTML += html;
+            });
         }
 
-        // --- ACCIONES DEL USUARIO ---
-        
-        // Crear Sala
-        btnHost.addEventListener('click', () => {
+        // --- ACCIONES ---
+        document.getElementById('btn-host').addEventListener('click', () => {
+            const code = Math.random().toString(36).substring(7);
             const name = document.getElementById('my-name').value;
             const game = document.getElementById('my-game').value;
             const ver = document.getElementById('my-version').value;
             const port = document.getElementById('puerto-local').value;
-            const code = Math.random().toString(36).substring(7); // Código random
 
             ws.send(JSON.stringify({
                 type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port
             }));
-
-            btnHost.disabled = true;
-            btnHost.textContent = "ESPERANDO JUGADOR...";
-            logEl.textContent = "Sala creada. Esperando conexión...";
+            
+            document.getElementById('log-text').textContent = "Sala creada. Esperando...";
+            document.getElementById('btn-host').disabled = true;
         });
 
-        // Unirse (Global)
-        window.joinGame = (code) => {
+        window.join = (code) => {
             const port = document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
-            logEl.textContent = "Intentando unirse...";
         };
 
-        // --- INICIAR TÚNEL (RUST) ---
         async function startTunnel(ip, port, role) {
-            logEl.textContent = role === 'HOST' ? "¡JUGADOR CONECTADO!" : "¡CONECTADO AL HOST!";
-            logEl.style.color = "#a4d007";
+            document.getElementById('log-text').textContent = role === 'HOST' ? "¡JUGADOR CONECTADO!" : "¡CONECTADO AL HOST!";
+            document.getElementById('log-text').style.color = "#a4d007";
             
-            const ipVirtual = document.getElementById('ip-virtual').value;
-            const puertoLocal = document.getElementById('puerto-local').value;
-
             try {
                 await invoke("conectar_tunel", { 
-                    ipDestino: ip + ":" + port,
-                    puertoLocal: puertoLocal,
-                    ipVirtual: ipVirtual
+                    ipDestino: ip + ":" + port, 
+                    puertoLocal: document.getElementById('puerto-local').value,
+                    ipVirtual: document.getElementById('ip-virtual').value 
                 });
-            } catch (e) {
-                logEl.textContent = "Error: " + e;
-                logEl.style.color = "red";
-            }
+            } catch (e) { console.error(e); }
         }
 
-        // --- INICIO ---
         connect();
-        
-        // Luces
         listen('trafico-entrada', () => {
             const led = document.getElementById('traffic-led');
-            led.style.background = "#a4d007";
-            setTimeout(()=> led.style.background = "#333", 50);
+            led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
         });
-
     </script>
 </body>
 </html>
