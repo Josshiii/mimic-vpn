@@ -4,9 +4,9 @@ use std::sync::Arc;
 use std::thread;
 use tauri::Emitter;
 
-// --- LIBRERÍAS DE SEGURIDAD (CORREGIDAS) ---
+// --- LIBRERÍAS DE SEGURIDAD ---
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
-use chacha20poly1305::aead::{Aead, KeyInit}; // <--- CAMBIO IMPORTANTE: KeyInit en lugar de NewAead
+use chacha20poly1305::aead::{Aead, KeyInit}; 
 use rand::RngCore; 
 use base64::{Engine as _, engine::general_purpose}; 
 
@@ -82,9 +82,6 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
                             session.send_packet(packet);
                             let _ = app_handle.emit("trafico-entrada", size);
                         }
-                    } else {
-                        // Silenciosamente ignoramos paquetes corruptos o ataques
-                        // println!("Ataque detectado o paquete corrupto"); 
                     }
                 }
             }
@@ -100,7 +97,7 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
     // 1. Decodificar la Llave Maestra
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) {
         Ok(k) => k,
-        Err(_) => return "Error: Clave de seguridad inválida (Base64 incorrecto)".to_string(),
+        Err(_) => return "Error: Clave inválida (Base64 incorrecto)".to_string(),
     };
 
     if key_bytes.len() != 32 {
@@ -109,7 +106,6 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
 
     // 2. Iniciar Motor de Encriptación
     let key = Key::from_slice(&key_bytes);
-    // AQUÍ ESTABA EL ERROR: Ahora usamos KeyInit::new implícito
     let cipher = Arc::new(ChaCha20Poly1305::new(key));
 
     // 3. Configurar Wintun
@@ -136,21 +132,16 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
         Err(e) => return format!("Puerto local {} ocupado: {}", puerto_local, e),
     };
     
-    // Hole Punching (Intento de abrir NAT)
-    let _ = socket_local.send_to(b"HOLA_NAT_SECURE", &ip_destino);
+    // Hole Punching Seguro
+    // Enviamos basura, pero el otro extremo la descartará al no poder desencriptarla.
+    // Esto es bueno: solo paquetes válidos pasan.
+    let _ = socket_local.send_to(b"HOLA_NAT_SECURE_INIT", &ip_destino);
 
-    // 4. Lanzar Hilos Seguros
-    iniciar_hilo_entrada(Arc::new(session), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
-    // El hilo de salida toma ownership de session, por eso clonamos arriba
-    // Nota: Como 'session' no implementa Clone nativo en todas las versiones, usamos Arc (que ya lo tenemos)
-    // El error anterior de compilación podría venir de aquí si session no es Arc. 
-    // En mi código arriba envolví session en Arc::new(session).
-    
-    // IMPORTANTE: session es Wintun Session. Para compartirla entre hilos, debe estar en un Arc.
-    // Arriba ya hice: let session = match ... { Ok(s) => s ... }
-    // Aquí la envuelvo:
+    // 4. Lanzar Hilos (CORRECCIÓN AQUÍ)
+    // Envolvemos la sesión en un Arc UNA SOLA VEZ
     let session_arc = Arc::new(session);
-    
+
+    // Repartimos clones del Arc (barato y seguro)
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
     iniciar_hilo_salida(session_arc, socket_local, ip_destino.clone(), cipher, app_handle);
 
