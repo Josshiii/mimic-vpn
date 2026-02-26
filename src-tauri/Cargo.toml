@@ -25,3 +25,8 @@ igd-next = "0.14.3"
 # Nube Steam (Render)
 tungstenite = { version = "0.20", features = ["rustls-tls-native-roots"] }
 url = "2.5"
+
+# Criptografía "Militar" (La misma que usa Google y WireGuard)
+chacha20poly1305 = "0.10"
+rand = "0.8"
+base64 = "0.21"
