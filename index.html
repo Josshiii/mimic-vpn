@@ -4,235 +4,108 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Mimic Hub</title>
-    <style>
-      /* DISEÑO ESTILO STEAM */
-      body { background: #1b2838; color: #c6d4df; font-family: sans-serif; display: flex; height: 100vh; margin: 0; overflow: hidden; }
-      
-      /* PANEL IZQUIERDO (TUS DATOS) */
-      .sidebar { width: 280px; background: #171a21; padding: 20px; display: flex; flex-direction: column; border-right: 1px solid #000; }
-      h2 { color: #fff; font-size: 16px; margin-bottom: 20px; letter-spacing: 1px; }
-      
-      label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-top: 10px; display: block; }
-      input { width: 100%; background: #101216; border: 1px solid #333; color: white; padding: 8px; margin-top: 5px; }
-      
-      button.host-btn { 
-        margin-top: 20px; padding: 15px; border: none; color: white; font-weight: bold; cursor: pointer;
-        background: linear-gradient(to right, #47bfff 0%, #1a44c2 100%);
-      }
-      button.host-btn:hover { filter: brightness(1.2); }
+<style>
+  :root { --bg: #1b2838; --panel: #171a21; --accent: #66c0f4; --green: #a4d007; --online: #57cbff; }
+  body { background: var(--bg); color: #c6d4df; font-family: 'Inter', sans-serif; display: flex; height: 100vh; margin: 0; }
+  
+  .sidebar { width: 240px; background: var(--panel); padding: 15px; border-right: 1px solid #000; display: flex; flex-direction: column; }
+  .main { flex: 1; padding: 20px; overflow-y: auto; background: rgba(0,0,0,0.2); }
+  .friends-list { width: 220px; background: #121418; padding: 15px; border-left: 1px solid #000; }
 
-      /* PANEL DERECHO (LISTA DE JUEGOS) */
-      .main { flex: 1; padding: 20px; display: flex; flex-direction: column; }
-      .header { display: flex; justify-content: space-between; border-bottom: 1px solid #3d4450; padding-bottom: 10px; margin-bottom: 10px; }
-      
-      .lobby-list { flex: 1; overflow-y: auto; }
-      
-      /* TARJETA DE SERVIDOR */
-      .server-card {
-        background: rgba(0,0,0,0.2); border-left: 4px solid #a4d007; padding: 10px; margin-bottom: 5px;
-        display: flex; justify-content: space-between; align-items: center;
-      }
-      .server-card:hover { background: rgba(255,255,255,0.05); }
-      
-      .game-info { font-size: 14px; color: #a4d007; font-weight: bold; }
-      .host-info { font-size: 12px; color: #888; }
-      
-      button.join-btn { background: #333; color: white; border: none; padding: 5px 15px; cursor: pointer; font-weight: bold; }
-      button.join-btn:hover { background: #a4d007; color: black; }
+  /* ESTILO AMIGOS */
+  .friend-item { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 12px; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
+  .status-dot.online { background: var(--online); box-shadow: 0 0 5px var(--online); }
+  .friend-name { font-weight: bold; color: #fff; }
+  .friend-game { color: var(--green); font-size: 10px; display: block; }
 
+  /* TARJETAS DE LOBBY */
+  .lobby-card { background: #2a475e; padding: 15px; border-radius: 4px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid var(--green); }
+  .btn-join { background: var(--green); color: #000; border: none; padding: 8px 15px; font-weight: bold; cursor: pointer; border-radius: 2px; }
+</style>
+    
       /* BARRA INFERIOR */
       .status-bar { height: 30px; background: #000; display: flex; align-items: center; padding: 0 10px; font-size: 11px; justify-content: space-between; }
       .oculto { display: none; }
     </style>
   </head>
-  <body>
+  
+<body>
+  <div class="sidebar">
+    <h2>MIMIC HUB</h2>
+    <label>MI NICKNAME</label>
+    <input id="my-name" value="Sasha">
+    <label>JUEGO ACTUAL</label>
+    <input id="my-game" value="Halo CE">
+    <button id="btn-host" class="host-btn" style="margin-top:20px; background: var(--accent); color:#000; border:none; padding:10px; font-weight:bold; cursor:pointer;">CREAR SALA PÚBLICA</button>
+  </div>
 
-    <div class="sidebar">
-      <h2>MIMIC HUB</h2>
-      
-      <label>TU NOMBRE</label>
-      <input id="my-name" value="Sasha">
+  <div class="main">
+    <h3 style="margin-bottom:15px; font-size:14px; color:var(--accent);">PARTIDAS DISPONIBLES</h3>
+    <div id="lobby-container"></div>
+  </div>
 
-      <label>JUEGO</label>
-      <input id="my-game" value="Halo CE">
+  <div class="friends-list">
+    <h3 style="font-size: 11px; color: #555; margin-bottom: 15px; letter-spacing: 1px;">AMIGOS EN LÍNEA</h3>
+    <div id="friends-container"></div>
+  </div>
 
-      <label>VERSIÓN / MAPA</label>
-      <input id="my-version" value="v1.0 - Slayer">
+  <script type="module">
+    const invoke = window.__TAURI__.core.invoke;
+    let ws;
+    const SERVER_URL = "wss://mimic-signal.onrender.com";
 
-      <button id="btn-host" class="host-btn">CREAR SALA PÚBLICA</button>
-      
-      <div style="margin-top: auto; font-size: 10px; color: #555;">
-        <p>Mimic Link v1.0</p>
-      </div>
-    </div>
-
-    <div class="main">
-      <div class="header">
-        <span>SALAS DISPONIBLES</span>
-        <button id="btn-refresh" style="background:transparent; border:1px solid #555; color:#fff; cursor:pointer;">⟳</button>
-      </div>
-
-      <div id="lobby-list" class="lobby-list">
-        <p style="text-align:center; color:#555; margin-top:20px;">Cargando servidores...</p>
-      </div>
-    </div>
-
-    <div class="oculto">
-      <input id="ip-virtual" value="10.10.10.2">
-      <input id="puerto-local" value="5000">
-    </div>
-
-    <div class="status-bar">
-      <span id="status-text">Desconectado</span>
-      <div style="display:flex; gap:5px;">
-        <div id="led" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
-      </div>
-    </div>
-
-    <script type="module">
-      const invoke = window.__TAURI__.core.invoke;
-      const listen = window.__TAURI__.event.listen;
-
-      // --- CONFIGURACIÓN ---
-      // Asegúrate de que esta URL sea la de tu Render actual
-      const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-      let ws;
-
-      // Elementos
-      const listDiv = document.getElementById('lobby-list');
-      const statusText = document.getElementById('status-text');
-      const btnHost = document.getElementById('btn-host');
-
-      // 1. CONECTAR AL SERVIDOR (Al abrir la app)
-      function connect() {
-        statusText.textContent = "Conectando al servidor...";
-        ws = new WebSocket(SERVER_URL);
-
-        ws.onopen = () => {
-            statusText.textContent = "Conectado. Listo para jugar.";
-            statusText.style.color = "#66c0f4";
-        };
-
-        ws.onmessage = (event) => {
-            const msg = JSON.parse(event.data);
-            
-            // Recibimos lista de juegos
-            if (msg.type === 'LOBBY_LIST') {
-                renderList(msg.data);
-            }
-            // Recibimos orden de conectar
-            if (msg.type === 'MATCH_FOUND') {
-                startTunnel(msg.peer_ip, msg.peer_port, msg.role);
-            }
-        };
-
-        ws.onclose = () => setTimeout(connect, 3000); // Reintentar si se cae
-      }
-
-      // 2. MOSTRAR LISTA DE JUEGOS (CORREGIDO EL ERROR DE UNDEFINED)
-      function renderList(lobbies) {
-        listDiv.innerHTML = "";
-        const codes = Object.keys(lobbies);
-
-        if (codes.length === 0) {
-            listDiv.innerHTML = "<p style='text-align:center; color:#555; margin-top:20px;'>No hay partidas. ¡Crea una!</p>";
-            return;
-        }
-
-        codes.forEach(code => {
-            const l = lobbies[code];
-            // HTML de cada fila
-            const card = document.createElement('div');
-            card.className = "server-card";
-            
-            // AQUÍ ESTABA EL ERROR: Antes usábamos l.game, ahora usamos l.gameName
-            // Aseguramos que existan datos o ponemos "Desconocido"
-            const juego = l.gameName || "Juego Desconocido";
-            const version = l.gameVer || "v1.0";
-            const host = l.hostName || "Anónimo";
-
-            card.innerHTML = `
-                <div>
-                    <div class="game-info">${juego} <span style="color:#666; font-size:11px;">(${version})</span></div>
-                    <div class="host-info">Host: ${host}</div>
-                </div>
-                <button class="join-btn" onclick="unirse('${code}')">UNIRSE</button>
-            `;
-            listDiv.appendChild(card);
-        });
-      }
-
-      // 3. CREAR SALA
-      btnHost.addEventListener('click', () => {
-        const name = document.getElementById('my-name').value;
-        const game = document.getElementById('my-game').value;
-        const ver = document.getElementById('my-version').value;
-        const port = document.getElementById('puerto-local').value;
-        
-        // Creamos un código aleatorio interno
-        const code = Math.random().toString(36).substring(7);
-
-        // Enviamos los datos con los nombres correctos: hostName, gameName, gameVer
-        ws.send(JSON.stringify({
-            type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port
-        }));
-
-        btnHost.disabled = true;
-        btnHost.textContent = "ESPERANDO JUGADOR...";
-        btnHost.style.background = "#a4d007";
-      });
-
-      // 4. UNIRSE (Función Global)
-      window.unirse = (code) => {
-        const port = document.getElementById('puerto-local').value;
-        ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
-        statusText.textContent = "Iniciando negociación...";
+    function connect() {
+      ws = new WebSocket(SERVER_URL);
+      ws.onopen = () => {
+        // Al conectar, nos registramos socialmente
+        ws.send(JSON.stringify({ type: 'HELLO', name: document.getElementById('my-name').value }));
       };
 
-      // 5. INICIAR TÚNEL (Rust)
-     // 5. INICIAR TÚNEL (Rust)
-      async function startTunnel(ip, port, role) {
-        // MENSAJE LIMPIO (Sin IPs visibles)
-        if (role === 'HOST') {
-            statusText.textContent = `🔒 JUGADOR CONECTADO Y SEGURO`;
-        } else {
-            statusText.textContent = `🔒 CONEXIÓN ESTABLECIDA CON EL HOST`;
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'SOCIAL_UPDATE') {
+          updateUI(msg.players, msg.lobbies);
         }
-        statusText.style.color = "#a4d007"; // Verde
-        
-        // Efecto visual de éxito
-        document.querySelector(".status-bar").style.borderTop = "2px solid #a4d007";
-
-        const ipVirtual = document.getElementById('ip-virtual').value;
-        const puertoLocal = document.getElementById('puerto-local').value;
-
-        try {
-            await invoke("conectar_tunel", { 
-                ipDestino: ip + ":" + port,
-                puertoLocal: puertoLocal,
-                ipVirtual: ipVirtual
-            });
-        } catch (e) {
-            statusText.textContent = "Error de Túnel: " + e;
-            statusText.style.color = "red";
+        if (msg.type === 'MATCH_FOUND') {
+          // Lógica de inicio de túnel (mantener la que ya tienes)
+          console.log("Conectando a:", msg.peer_ip);
         }
-      }
-      
-      // Refrescar
-      document.getElementById('btn-refresh').addEventListener('click', () => {
-          ws.send(JSON.stringify({ type: 'REFRESH' }));
-      });
+      };
+    }
 
-      // Iniciar
-      connect();
+    function updateUI(players, lobbies) {
+      // Actualizar Lista de Amigos
+      const fContainer = document.getElementById('friends-container');
+      fContainer.innerHTML = players.map(p => `
+        <div class="friend-item">
+          <div class="status-dot online"></div>
+          <div>
+            <span class="friend-name">${p.name}</span>
+            <span class="friend-game">${p.game}</span>
+          </div>
+        </div>
+      `).join('');
 
-      // Luces (Feedback visual)
-      listen('trafico-entrada', () => {
-          const led = document.getElementById('led');
-          led.style.background = "#a4d007";
-          setTimeout(() => led.style.background = "#333", 50);
-      });
+      // Actualizar Lista de Lobbies
+      const lContainer = document.getElementById('lobby-container');
+      const codes = Object.keys(lobbies);
+      lContainer.innerHTML = codes.map(code => `
+        <div class="lobby-card">
+          <div>
+            <div style="font-weight:bold; color:#fff;">${lobbies[code].gameName}</div>
+            <div style="font-size:11px; color:var(--accent);">Host: ${lobbies[code].hostName}</div>
+          </div>
+          <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
+        </div>
+      `).join('');
+    }
 
-    </script>
-  </body>
+    window.join = (code) => {
+      ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: "5000" }));
+    };
+
+    connect();
+  </script>
+</body>
 </html>
