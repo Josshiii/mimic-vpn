@@ -22,9 +22,9 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "capabilities": []
     }
-  },
   "bundle": {
     "active": true,
     "targets": "all",
@@ -39,5 +39,6 @@
     ]
   }
 }
+
 
 
