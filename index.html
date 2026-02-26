@@ -190,15 +190,19 @@
       };
 
       // 5. INICIAR TÚNEL (Rust)
+     // 5. INICIAR TÚNEL (Rust)
       async function startTunnel(ip, port, role) {
-        // Mensaje más amigable
+        // MENSAJE LIMPIO (Sin IPs visibles)
         if (role === 'HOST') {
-            statusText.textContent = `¡JUGADOR CONECTADO! IP: ${ip}`;
+            statusText.textContent = `🔒 JUGADOR CONECTADO Y SEGURO`;
         } else {
-            statusText.textContent = `¡CONECTADO AL HOST! IP: ${ip}`;
+            statusText.textContent = `🔒 CONEXIÓN ESTABLECIDA CON EL HOST`;
         }
         statusText.style.color = "#a4d007"; // Verde
         
+        // Efecto visual de éxito
+        document.querySelector(".status-bar").style.borderTop = "2px solid #a4d007";
+
         const ipVirtual = document.getElementById('ip-virtual').value;
         const puertoLocal = document.getElementById('puerto-local').value;
 
@@ -209,10 +213,11 @@
                 ipVirtual: ipVirtual
             });
         } catch (e) {
-            statusText.textContent = "Error Túnel: " + e;
+            statusText.textContent = "Error de Túnel: " + e;
+            statusText.style.color = "red";
         }
       }
-
+      
       // Refrescar
       document.getElementById('btn-refresh').addEventListener('click', () => {
           ws.send(JSON.stringify({ type: 'REFRESH' }));
