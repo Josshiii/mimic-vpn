@@ -1,101 +1,90 @@
 use std::net::UdpSocket;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::thread;
 use tauri::Emitter;
-use tungstenite::{connect, Message};
-use url::Url;
-use std::time::Duration;
 
-// --- LIBRERÍAS DE SEGURIDAD ---
-use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; // El algoritmo
-use chacha20poly1305::aead::{Aead, NewAead}; // Funciones de encriptar
-use rand::{Rng, RngCore}; // Generador de aleatoriedad
-use base64::{Engine as _, engine::general_purpose}; // Para enviar claves en texto
+// --- LIBRERÍAS DE SEGURIDAD (CORREGIDAS) ---
+use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
+use chacha20poly1305::aead::{Aead, KeyInit}; // <--- CAMBIO IMPORTANTE: KeyInit en lugar de NewAead
+use rand::RngCore; 
+use base64::{Engine as _, engine::general_purpose}; 
 
 // CONFIGURACIÓN
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
-// Asegúrate de que esta sea TU URL de Render
-const SERVER_URL: &str = "wss://mimic-signal.onrender.com"; 
 
 // --- FUNCIONES DE TÚNEL SEGURO ---
 
 // 🔒 Hilo de SALIDA (PC -> INTERNET)
-// Encripta todo lo que sale de tu adaptador antes de enviarlo
 fn iniciar_hilo_salida<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
     ip_amigo: String, 
-    cipher: Arc<ChaCha20Poly1305>, // <--- Nuestra máquina de encriptación
+    cipher: Arc<ChaCha20Poly1305>, 
     app_handle: tauri::AppHandle<R>
 ) {
     thread::spawn(move || {
         loop {
-            if let Ok(packet) = session.receive_blocking() {
-                let bytes = packet.bytes();
-                if bytes.len() > 0 {
-                    // 1. Generar un Nonce (Número único para este paquete)
-                    // Esto evita ataques de "Replay"
-                    let mut nonce_bytes = [0u8; 12];
-                    rand::thread_rng().fill_bytes(&mut nonce_bytes);
-                    let nonce = Nonce::from_slice(&nonce_bytes);
+            // Usamos receive_blocking para esperar paquetes del sistema
+            match session.receive_blocking() {
+                Ok(packet) => {
+                    let bytes = packet.bytes();
+                    if bytes.len() > 0 {
+                        // 1. Generar Nonce único
+                        let mut nonce_bytes = [0u8; 12];
+                        rand::thread_rng().fill_bytes(&mut nonce_bytes);
+                        let nonce = Nonce::from_slice(&nonce_bytes);
 
-                    // 2. 🔒 ENCRIPTAR EL PAQUETE
-                    // Si falla la encriptación, ignoramos el paquete (no debería pasar)
-                    if let Ok(encrypted_msg) = cipher.encrypt(nonce, bytes) {
-                        
-                        // 3. Empaquetar: [NONCE (12 bytes)] + [DATOS ENCRIPTADOS]
-                        // El receptor necesita el Nonce para desencriptar, se envía en claro (no es secreto)
-                        let mut final_packet = nonce_bytes.to_vec();
-                        final_packet.extend_from_slice(&encrypted_msg);
+                        // 2. 🔒 ENCRIPTAR
+                        if let Ok(encrypted_msg) = cipher.encrypt(nonce, bytes) {
+                            
+                            // 3. Empaquetar: [NONCE] + [DATOS]
+                            let mut final_packet = nonce_bytes.to_vec();
+                            final_packet.extend_from_slice(&encrypted_msg);
 
-                        // 4. Enviar bala blindada a internet
-                        let _ = socket.send_to(&final_packet, &ip_amigo);
-                        let _ = app_handle.emit("trafico-salida", bytes.len());
+                            // 4. Enviar
+                            let _ = socket.send_to(&final_packet, &ip_amigo);
+                            let _ = app_handle.emit("trafico-salida", bytes.len());
+                        }
                     }
-                }
-            } else { break; }
+                },
+                Err(_) => break, // Si falla la sesión, salimos del hilo
+            }
         }
     });
 }
 
 // 🔓 Hilo de ENTRADA (INTERNET -> PC)
-// Desencripta lo que llega y lo verifica
 fn iniciar_hilo_entrada<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
-    cipher: Arc<ChaCha20Poly1305>, // <--- Nuestra máquina de desencriptación
+    cipher: Arc<ChaCha20Poly1305>, 
     app_handle: tauri::AppHandle<R>
 ) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
         loop {
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
-                // El paquete debe tener al menos 12 bytes (Nonce) + 1 byte de datos
                 if size > 12 {
                     let datos_recibidos = &buffer[..size];
                     
-                    // 1. Separar el Nonce de los Datos
+                    // 1. Separar Nonce y Datos
                     let nonce_bytes = &datos_recibidos[..12];
                     let ciphertext = &datos_recibidos[12..];
                     let nonce = Nonce::from_slice(nonce_bytes);
 
-                    // 2. 🔓 DESENCRIPTAR Y VERIFICAR
-                    // Si alguien manipuló el paquete en internet, esto fallará automáticamente
-                    match cipher.decrypt(nonce, ciphertext) {
-                        Ok(decrypted_data) => {
-                            // Éxito: Escribir en el adaptador virtual
-                            if let Ok(mut packet) = session.allocate_send_packet(decrypted_data.len() as u16) {
-                                packet.bytes_mut().copy_from_slice(&decrypted_data);
-                                session.send_packet(packet);
-                                let _ = app_handle.emit("trafico-entrada", size);
-                            }
-                        },
-                        Err(_) => {
-                            // 🚨 ALERTA: Paquete corrupto o ataque detectado. Se descarta silenciosamente.
-                            println!("Paquete inválido o ataque detectado. Descartado.");
+                    // 2. 🔓 DESENCRIPTAR
+                    if let Ok(decrypted_data) = cipher.decrypt(nonce, ciphertext) {
+                        // Éxito: Escribir en adaptador virtual
+                        if let Ok(mut packet) = session.allocate_send_packet(decrypted_data.len() as u16) {
+                            packet.bytes_mut().copy_from_slice(&decrypted_data);
+                            session.send_packet(packet);
+                            let _ = app_handle.emit("trafico-entrada", size);
                         }
+                    } else {
+                        // Silenciosamente ignoramos paquetes corruptos o ataques
+                        // println!("Ataque detectado o paquete corrupto"); 
                     }
                 }
             }
@@ -108,31 +97,35 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
 #[tauri::command]
 fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     
-    // 1. Decodificar la Llave Maestra (Viene del WebSocket)
+    // 1. Decodificar la Llave Maestra
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) {
         Ok(k) => k,
-        Err(_) => return "Error: Clave de seguridad inválida".to_string(),
+        Err(_) => return "Error: Clave de seguridad inválida (Base64 incorrecto)".to_string(),
     };
 
     if key_bytes.len() != 32 {
-        return "Error: La clave debe ser de 32 bytes".to_string();
+        return format!("Error: La clave debe ser de 32 bytes (Recibidos: {})", key_bytes.len());
     }
 
-    // 2. Iniciar el Motor de Encriptación
+    // 2. Iniciar Motor de Encriptación
     let key = Key::from_slice(&key_bytes);
+    // AQUÍ ESTABA EL ERROR: Ahora usamos KeyInit::new implícito
     let cipher = Arc::new(ChaCha20Poly1305::new(key));
 
-    // 3. Configuración estándar de red (Wintun)
+    // 3. Configurar Wintun
     let wintun = unsafe { wintun::load_from_path("wintun.dll") };
     if wintun.is_err() { return "Falta wintun.dll".to_string(); }
     let wintun = wintun.unwrap();
 
     let adapter = match wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None) {
         Ok(a) => a,
-        Err(_) => return "Error creando adaptador (¿Eres Admin?)".to_string(),
+        Err(_) => return "Error creando adaptador (Necesitas ser Admin)".to_string(),
     };
 
-    let session = adapter.start_session(0x400000).unwrap();
+    let session = match adapter.start_session(0x400000) {
+        Ok(s) => s,
+        Err(e) => return format!("Error iniciando sesión Wintun: {:?}", e),
+    };
 
     let _ = Command::new("netsh")
         .args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK])
@@ -140,20 +133,30 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
 
     let socket_local = match UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)) {
         Ok(s) => s,
-        Err(e) => return format!("Puerto ocupado: {}", e),
+        Err(e) => return format!("Puerto local {} ocupado: {}", puerto_local, e),
     };
     
-    // HOLE PUNCHING (Ahora enviamos basura encriptada para abrir el puerto)
-    let _ = socket_local.send_to(b"HOLA_NAT", &ip_destino);
+    // Hole Punching (Intento de abrir NAT)
+    let _ = socket_local.send_to(b"HOLA_NAT_SECURE", &ip_destino);
 
-    // 4. Lanzar Hilos con Seguridad Activada
+    // 4. Lanzar Hilos Seguros
     iniciar_hilo_entrada(Arc::new(session), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
-    iniciar_hilo_salida(Arc::new(session), socket_local, ip_destino.clone(), cipher, app_handle);
+    // El hilo de salida toma ownership de session, por eso clonamos arriba
+    // Nota: Como 'session' no implementa Clone nativo en todas las versiones, usamos Arc (que ya lo tenemos)
+    // El error anterior de compilación podría venir de aquí si session no es Arc. 
+    // En mi código arriba envolví session en Arc::new(session).
+    
+    // IMPORTANTE: session es Wintun Session. Para compartirla entre hilos, debe estar en un Arc.
+    // Arriba ya hice: let session = match ... { Ok(s) => s ... }
+    // Aquí la envuelvo:
+    let session_arc = Arc::new(session);
+    
+    iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
+    iniciar_hilo_salida(session_arc, socket_local, ip_destino.clone(), cipher, app_handle);
 
-    format!("CONEXIÓN SEGURA ACTIVA: {}", ip_destino)
+    format!("ENLACE SEGURO ACTIVO CON: {}", ip_destino)
 }
 
-// Genera una clave segura de 32 bytes para la sesión
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32];
