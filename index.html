@@ -3,154 +3,89 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Mimic Link</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-    
+    <title>Mimic Hub</title>
     <style>
-      :root {
-        --bg-color: #0f0f13;
-        --card-bg: rgba(30, 30, 35, 0.75);
-        --primary: #6366f1; 
-        --success: #10b981;
-        --text-main: #ffffff;
-        --text-dim: #9ca3af;
-      }
-
-      * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
-
-      body {
-        background-color: var(--bg-color);
-        background-image: radial-gradient(circle at 50% 0%, #2d2d44 0%, var(--bg-color) 70%);
-        color: var(--text-main);
-        font-family: 'Inter', sans-serif;
-        height: 100vh;
-        display: flex; justify-content: center; align-items: center; overflow: hidden;
-      }
-
-      .app-card {
-        background: var(--card-bg);
-        backdrop-filter: blur(20px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        width: 100%; height: 100%; max-width: 420px; max-height: 680px; /* Un poco más alto */
-        border-radius: 24px; padding: 30px;
-        display: flex; flex-direction: column; align-items: center;
-        box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-      }
-
-      h1 { font-size: 24px; font-weight: 800; background: linear-gradient(to right, #fff, #a5b4fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-      .subtitle { color: var(--text-dim); font-size: 12px; font-weight: 600; letter-spacing: 1px; margin-bottom: 20px; }
-
-      /* INPUT CÓDIGO */
-      .code-container { width: 100%; margin-bottom: 20px; position: relative; }
-      .code-label { position: absolute; top: -8px; left: 15px; background: #222; padding: 0 5px; font-size: 10px; color: var(--primary); font-weight: bold; border-radius: 4px; }
+      /* DISEÑO ESTILO STEAM */
+      body { background: #1b2838; color: #c6d4df; font-family: sans-serif; display: flex; height: 100vh; margin: 0; overflow: hidden; }
       
-      input#room-code {
-        width: 100%; background: rgba(0,0,0,0.3); border: 2px solid #333; border-radius: 12px; padding: 15px;
-        font-size: 20px; font-weight: 800; color: white; text-align: center; letter-spacing: 3px; text-transform: uppercase;
-        outline: none; transition: 0.3s;
-      }
-      input#room-code:focus { border-color: var(--primary); box-shadow: 0 0 15px rgba(99, 102, 241, 0.3); }
-
-      button#btn-cloud {
-        width: 100%; padding: 15px; border-radius: 12px; border: none; background: var(--primary);
-        color: white; font-weight: 700; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.3); margin-bottom: 25px;
-      }
-      button:hover { filter: brightness(1.1); transform: translateY(-2px); }
-
-      /* --- NUEVO: APARTADO DE AMIGOS (SQUAD) --- */
-      .squad-title { width: 100%; text-align: left; font-size: 11px; color: #666; font-weight: 700; margin-bottom: 10px; letter-spacing: 1px; }
+      /* PANEL IZQUIERDO (TUS DATOS) */
+      .sidebar { width: 280px; background: #171a21; padding: 20px; display: flex; flex-direction: column; border-right: 1px solid #000; }
+      h2 { color: #fff; font-size: 16px; margin-bottom: 20px; letter-spacing: 1px; }
       
-      .squad-container {
-        width: 100%;
-        background: rgba(0,0,0,0.2);
-        border-radius: 16px;
-        padding: 15px;
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        margin-bottom: 20px;
-      }
-
-      .player-card {
-        display: flex; align-items: center; gap: 12px;
-        padding: 10px; border-radius: 12px;
-        background: rgba(255,255,255,0.03);
-        border: 1px solid transparent;
-        transition: 0.3s;
-      }
-
-      .player-card.active { background: rgba(16, 185, 129, 0.1); border-color: rgba(16, 185, 129, 0.3); }
-      .player-card.empty { opacity: 0.5; border-style: dashed; border-color: #444; }
-
-      .avatar {
-        width: 35px; height: 35px; border-radius: 50%;
-        background: #333; display: flex; justify-content: center; align-items: center;
-        font-weight: bold; font-size: 14px;
-      }
-      .avatar.online { background: linear-gradient(135deg, #6366f1, #a5b4fc); box-shadow: 0 0 10px rgba(99, 102, 241, 0.5); }
-      .avatar.peer { background: linear-gradient(135deg, #10b981, #34d399); }
-
-      .info { display: flex; flex-direction: column; }
-      .name { font-size: 13px; font-weight: 600; }
-      .status { font-size: 10px; color: #666; display: flex; align-items: center; gap: 5px; }
+      label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-top: 10px; display: block; }
+      input { width: 100%; background: #101216; border: 1px solid #333; color: white; padding: 8px; margin-top: 5px; }
       
-      .dot { width: 6px; height: 6px; border-radius: 50%; background: #444; }
-      .dot.green { background: #10b981; box-shadow: 0 0 5px #10b981; }
+      button.host-btn { 
+        margin-top: 20px; padding: 15px; border: none; color: white; font-weight: bold; cursor: pointer;
+        background: linear-gradient(to right, #47bfff 0%, #1a44c2 100%);
+      }
+      button.host-btn:hover { filter: brightness(1.2); }
 
-      /* LUCES DISCRETAS */
-      .traffic-lights { display: flex; gap: 8px; position: absolute; bottom: 20px; right: 30px; }
-      .led { width: 6px; height: 6px; border-radius: 50%; background: #333; transition: 0.1s; }
+      /* PANEL DERECHO (LISTA DE JUEGOS) */
+      .main { flex: 1; padding: 20px; display: flex; flex-direction: column; }
+      .header { display: flex; justify-content: space-between; border-bottom: 1px solid #3d4450; padding-bottom: 10px; margin-bottom: 10px; }
+      
+      .lobby-list { flex: 1; overflow-y: auto; }
+      
+      /* TARJETA DE SERVIDOR */
+      .server-card {
+        background: rgba(0,0,0,0.2); border-left: 4px solid #a4d007; padding: 10px; margin-bottom: 5px;
+        display: flex; justify-content: space-between; align-items: center;
+      }
+      .server-card:hover { background: rgba(255,255,255,0.05); }
+      
+      .game-info { font-size: 14px; color: #a4d007; font-weight: bold; }
+      .host-info { font-size: 12px; color: #888; }
+      
+      button.join-btn { background: #333; color: white; border: none; padding: 5px 15px; cursor: pointer; font-weight: bold; }
+      button.join-btn:hover { background: #a4d007; color: black; }
 
-      /* TEXTO DE ESTADO */
-      .main-status { font-size: 12px; color: #888; margin-top: auto; }
-
-      /* AVANZADO OCULTO */
-      #advanced-panel { display: none; }
+      /* BARRA INFERIOR */
+      .status-bar { height: 30px; background: #000; display: flex; align-items: center; padding: 0 10px; font-size: 11px; justify-content: space-between; }
+      .oculto { display: none; }
     </style>
   </head>
   <body>
 
-    <div class="app-card">
-      <h1>Mimic Link</h1>
-      <p class="subtitle">LOBBY & SQUAD</p>
+    <div class="sidebar">
+      <h2>MIMIC HUB</h2>
+      
+      <label>TU NOMBRE</label>
+      <input id="my-name" value="Jugador 1">
 
-      <div class="squad-title">MI ESCUADRÓN (2/2)</div>
-      <div class="squad-container">
-        
-        <div class="player-card active">
-          <div class="avatar online">YO</div>
-          <div class="info">
-            <span class="name">Tú (Host)</span>
-            <span class="status"><span class="dot green"></span> En Línea</span>
-          </div>
-        </div>
+      <label>JUEGO</label>
+      <input id="my-game" value="Halo CE">
 
-        <div class="player-card empty" id="p2-card">
-          <div class="avatar" id="p2-avatar">?</div>
-          <div class="info">
-            <span class="name" id="p2-name">Esperando jugador...</span>
-            <span class="status" id="p2-status"><span class="dot"></span> Desconectado</span>
-          </div>
-        </div>
+      <label>VERSIÓN / MAPA</label>
+      <input id="my-version" value="v1.0 - Slayer">
 
+      <button id="btn-host" class="host-btn">CREAR SALA PÚBLICA</button>
+      
+      <div style="margin-top: auto; font-size: 10px; color: #555;">
+        <p>Mimic Link v1.0</p>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="header">
+        <span>SALAS DISPONIBLES</span>
+        <button id="btn-refresh" style="background:transparent; border:1px solid #555; color:#fff; cursor:pointer;">⟳</button>
       </div>
 
-      <div class="code-container">
-        <span class="code-label">CÓDIGO DE SALA</span>
-        <input id="room-code" placeholder="CÓDIGO" maxlength="8">
+      <div id="lobby-list" class="lobby-list">
+        <p style="text-align:center; color:#555; margin-top:20px;">Cargando servidores...</p>
       </div>
+    </div>
 
-      <button id="btn-cloud">UNIRSE A SALA</button>
-      <p class="main-status" id="status-text">Listo para conectar</p>
+    <div class="oculto">
+      <input id="ip-virtual" value="10.10.10.2">
+      <input id="puerto-local" value="5000">
+    </div>
 
-      <div class="traffic-lights">
-        <div id="led-tx" class="led"></div>
-        <div id="led-rx" class="led"></div>
-      </div>
-
-      <div id="advanced-panel">
-         <input id="ip-virtual" value="10.10.10.2">
-         <input id="puerto-local" value="5000">
+    <div class="status-bar">
+      <span id="status-text">Desconectado</span>
+      <div style="display:flex; gap:5px;">
+        <div id="led" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
       </div>
     </div>
 
@@ -158,79 +93,128 @@
       const invoke = window.__TAURI__.core.invoke;
       const listen = window.__TAURI__.event.listen;
 
-      // Elementos
-      const btn = document.querySelector("#btn-cloud");
-      const statusText = document.querySelector("#status-text");
-      const p2Card = document.querySelector("#p2-card");
-      const p2Name = document.querySelector("#p2-name");
-      const p2Status = document.querySelector("#p2-status");
-      const p2Avatar = document.querySelector("#p2-avatar");
+      // --- CONFIGURACIÓN ---
+      const SERVER_URL = "wss://mimic-signal.onrender.com"; 
+      let ws;
 
-      // Función: Activar Amigo Visualmente
-      function amigoConectado(ip) {
-        p2Card.classList.remove("empty");
-        p2Card.classList.add("active");
-        
-        p2Avatar.textContent = "P2";
-        p2Avatar.classList.add("peer");
-        
-        p2Name.textContent = "Amigo Conectado";
-        p2Status.innerHTML = `<span class="dot green"></span> Conectado vía ${ip}`; // Muestra la IP real pequeña
-        
-        statusText.textContent = "TÚNEL ESTABLECIDO Y SEGURO";
-        statusText.style.color = "#10b981";
+      // Elementos
+      const listDiv = document.getElementById('lobby-list');
+      const statusText = document.getElementById('status-text');
+      const btnHost = document.getElementById('btn-host');
+
+      // 1. CONECTAR AL SERVIDOR (Al abrir la app)
+      function connect() {
+        statusText.textContent = "Conectando al servidor...";
+        ws = new WebSocket(SERVER_URL);
+
+        ws.onopen = () => {
+            statusText.textContent = "Conectado. Listo para jugar.";
+            statusText.style.color = "#66c0f4";
+        };
+
+        ws.onmessage = (event) => {
+            const msg = JSON.parse(event.data);
+            
+            // Recibimos lista de juegos
+            if (msg.type === 'LOBBY_LIST') {
+                renderList(msg.data);
+            }
+            // Recibimos orden de conectar
+            if (msg.type === 'MATCH_FOUND') {
+                startTunnel(msg.peer_ip, msg.peer_port);
+            }
+        };
+
+        ws.onclose = () => setTimeout(connect, 3000); // Reintentar si se cae
       }
 
-      async function conectar() {
-        const codigo = document.querySelector("#room-code").value;
-        const ip = document.querySelector("#ip-virtual").value;
-        const port = document.querySelector("#puerto-local").value;
+      // 2. MOSTRAR LISTA DE JUEGOS
+      function renderList(lobbies) {
+        listDiv.innerHTML = "";
+        const codes = Object.keys(lobbies);
 
-        if (!codigo) return;
+        if (codes.length === 0) {
+            listDiv.innerHTML = "<p style='text-align:center; color:#555; margin-top:20px;'>No hay partidas. ¡Crea una!</p>";
+            return;
+        }
 
-        btn.disabled = true;
-        btn.textContent = "BUSCANDO...";
-        btn.style.background = "#fbbf24"; // Amarillo
-        statusText.textContent = "Contactando servidor...";
+        codes.forEach(code => {
+            const l = lobbies[code];
+            // HTML de cada fila
+            const card = document.createElement('div');
+            card.className = "server-card";
+            card.innerHTML = `
+                <div>
+                    <div class="game-info">${l.game} <span style="color:#666; font-size:11px;">(${l.version})</span></div>
+                    <div class="host-info">Host: ${l.host}</div>
+                </div>
+                <button class="join-btn" onclick="unirse('${code}')">UNIRSE</button>
+            `;
+            listDiv.appendChild(card);
+        });
+      }
+
+      // 3. CREAR SALA
+      btnHost.addEventListener('click', () => {
+        const name = document.getElementById('my-name').value;
+        const game = document.getElementById('my-game').value;
+        const ver = document.getElementById('my-version').value;
+        const port = document.getElementById('puerto-local').value;
+        
+        // Creamos un código aleatorio interno
+        const code = Math.random().toString(36).substring(7);
+
+        ws.send(JSON.stringify({
+            type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port
+        }));
+
+        btnHost.disabled = true;
+        btnHost.textContent = "ESPERANDO JUGADOR...";
+        btnHost.style.background = "#a4d007";
+      });
+
+      // 4. UNIRSE (Función Global)
+      window.unirse = (code) => {
+        const port = document.getElementById('puerto-local').value;
+        ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
+        statusText.textContent = "Uniéndose...";
+      };
+
+      // 5. INICIAR TÚNEL (Rust)
+      async function startTunnel(ip, port) {
+        statusText.textContent = `¡CONECTADO CON ${ip}!`;
+        statusText.style.color = "#a4d007"; // Verde
+        
+        const ipVirtual = document.getElementById('ip-virtual').value;
+        const puertoLocal = document.getElementById('puerto-local').value;
 
         try {
-            const respuesta = await invoke("conectar_sala", { 
-                codigoSala: codigo,
-                puertoLocal: port,
-                ipVirtual: ip
+            // Llamamos a Rust para que haga el trabajo sucio
+            await invoke("conectar_tunel", { 
+                ipDestino: ip + ":" + port,
+                puertoLocal: puertoLocal,
+                ipVirtual: ipVirtual
             });
-
-            if (respuesta.includes("CONECTADO") || respuesta.includes("MATCH")) {
-                btn.textContent = "EN LÍNEA";
-                btn.style.background = "#10b981"; // Verde
-                
-                // Extraemos la IP del mensaje de respuesta para mostrarla
-                // La respuesta suele ser "CONECTADO A: 201.x.x.x:5000"
-                const ipAmigo = respuesta.split(": ")[1] || "Directo";
-                amigoConectado(ipAmigo);
-            } else {
-                throw "Fallo";
-            }
-
         } catch (e) {
-            btn.disabled = false;
-            btn.textContent = "REINTENTAR";
-            btn.style.background = "#ef4444";
-            statusText.textContent = "Error: " + e;
+            statusText.textContent = "Error Túnel: " + e;
         }
       }
 
-      document.querySelector("#btn-cloud").addEventListener("click", conectar);
+      // Refrescar
+      document.getElementById('btn-refresh').addEventListener('click', () => {
+          ws.send(JSON.stringify({ type: 'REFRESH' }));
+      });
 
-      // Luces
-      listen('trafico-salida', () => {
-        const l = document.querySelector("#led-tx");
-        l.style.background = "#10b981"; setTimeout(()=>l.style.background="#333",50);
-      });
+      // Iniciar
+      connect();
+
+      // Luces (Feedback visual)
       listen('trafico-entrada', () => {
-        const l = document.querySelector("#led-rx");
-        l.style.background = "#3b82f6"; setTimeout(()=>l.style.background="#333",50);
+          const led = document.getElementById('led');
+          led.style.background = "#a4d007";
+          setTimeout(() => led.style.background = "#333", 50);
       });
+
     </script>
   </body>
 </html>
