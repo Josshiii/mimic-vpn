@@ -1,8 +1,8 @@
 use std::net::UdpSocket;
 use std::process::Command;
-use std::sync::{Arc, Mutex}; // Necesitamos Mutex para compartir datos
+use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant}; // Para medir el tiempo (Ping)
+use std::time::Duration; // Solo Duration, quitamos Instant
 use tauri::Emitter;
 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
@@ -12,12 +12,18 @@ use base64::{Engine as _, engine::general_purpose};
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
-const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; // Mensaje secreto de latido
+const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; // Mensaje secreto
 
 // --- FUNCIONES DE RED ---
 
-// 1. HILO DE SALIDA (Tráfico de Juego)
-fn iniciar_hilo_salida<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, ip_amigo: String, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
+// 1. HILO DE SALIDA (Juego -> Internet)
+fn iniciar_hilo_salida<R: tauri::Runtime>(
+    session: Arc<wintun::Session>, 
+    socket: UdpSocket, 
+    ip_amigo: String, 
+    cipher: Arc<ChaCha20Poly1305>, 
+    app_handle: tauri::AppHandle<R>
+) {
     thread::spawn(move || {
         loop {
             match session.receive_blocking() {
@@ -34,19 +40,23 @@ fn iniciar_hilo_salida<R: tauri::Runtime>(session: Arc<wintun::Session>, socket:
     });
 }
 
-// 2. HILO DE LATIDO (Keep-Alive & Ping) - NUEVO 💓
-// Envía un paquete vacío cada 2 segundos para mantener el router abierto
-fn iniciar_hilo_latido<R: tauri::Runtime>(socket: UdpSocket, ip_amigo: String, cipher: Arc<ChaCha20Poly1305>) {
+// 2. HILO DE LATIDO (Keep-Alive) - CORREGIDO
+// Eliminamos <R: tauri::Runtime> porque este hilo no habla con la UI
+fn iniciar_hilo_latido(
+    socket: UdpSocket, 
+    ip_amigo: String, 
+    cipher: Arc<ChaCha20Poly1305>
+) {
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
-            // Enviamos el latido encriptado (para que parezca tráfico real)
+            // Enviamos latido para mantener el NAT abierto
             enviar_paquete_seguro(&socket, &ip_amigo, HEARTBEAT_MSG, &cipher);
         }
     });
 }
 
-// Función auxiliar para encriptar y enviar (reutilizable)
+// Auxiliar para encriptar
 fn enviar_paquete_seguro(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
@@ -59,8 +69,13 @@ fn enviar_paquete_seguro(socket: &UdpSocket, destino: &str, datos: &[u8], cipher
     }
 }
 
-// 3. HILO DE ENTRADA (Recibir y Clasificar)
-fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
+// 3. HILO DE ENTRADA (Internet -> Juego)
+fn iniciar_hilo_entrada<R: tauri::Runtime>(
+    session: Arc<wintun::Session>, 
+    socket: UdpSocket, 
+    cipher: Arc<ChaCha20Poly1305>, 
+    app_handle: tauri::AppHandle<R>
+) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
         loop {
@@ -71,13 +86,12 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         
-                        // ¿ES UN LATIDO? 💓
+                        // ¿ES UN LATIDO?
                         if decrypted == HEARTBEAT_MSG {
-                            // No lo mandamos al adaptador (Windows no sabría qué hacer con él)
-                            // Solo avisamos al Frontend: "¡Llegó un latido!"
+                            // Avisamos al Frontend para el efecto visual
                             let _ = app_handle.emit("evento-ping", ());
                         } 
-                        // ¿ES TRÁFICO REAL? 🎮
+                        // ¿TRÁFICO REAL?
                         else {
                             if let Ok(mut packet) = session.allocate_send_packet(decrypted.len() as u16) {
                                 packet.bytes_mut().copy_from_slice(&decrypted);
@@ -127,9 +141,11 @@ fn conectar_tunel(ip_destino: String, puerto_local: String, ip_virtual: String, 
 
     let session_arc = Arc::new(session);
 
-    // Lanzamos los 3 Hilos: Entrada, Salida y Latido
+    // Lanzamos los 3 Hilos
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
-    iniciar_hilo_salida(session_arc, socket_local.try_clone().unwrap(), ip_destino.clone(), cipher.clone(), app_handle.clone());
+    iniciar_hilo_salida(session_arc, socket_local.try_clone().unwrap(), ip_destino.clone(), cipher.clone(), app_handle);
+    
+    // Aquí llamamos a la función corregida (sin genéricos)
     iniciar_hilo_latido(socket_local, ip_destino, cipher);
 
     format!("ENLACE ACTIVO CON: {}", ip_destino)
