@@ -10,6 +10,13 @@ use std::fs::File;
 use std::io::{Read, Write}; 
 use std::path::{Path, PathBuf};
 
+// IMPORTANTE: Módulos para el System Tray (Modo Fantasma)
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+    Manager, WindowEvent,
+};
+
 // SEGURIDAD AVANZADA
 use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
@@ -157,7 +164,6 @@ fn obtener_ip_local() -> Option<Ipv4Addr> {
 
 // --- COMANDOS EXPORTADOS PARA JS ---
 
-// 1. Obtener IP Local (Para Híbrido LAN/WAN)
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String {
     match obtener_ip_local() {
@@ -166,7 +172,6 @@ fn obtener_ip_local_cmd() -> String {
     }
 }
 
-// 2. Enviar Archivo P2P
 #[tauri::command]
 fn enviar_archivo(ip_destino: String) -> String {
     let file = rfd::FileDialog::new().set_title("Selecciona archivo").pick_file();
@@ -193,7 +198,6 @@ fn enviar_archivo(ip_destino: String) -> String {
     } "Cancelado".to_string()
 }
 
-// 3. UPnP Rompehielos
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
@@ -205,19 +209,16 @@ fn intentar_upnp(puerto_interno: u16) -> String {
     }
 }
 
-// 4. Agregar Amigo al Switch
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_mut() { table.insert(ip_virtual, ip_destino); return "OK".to_string(); } } "Error".to_string()
 }
 
-// 5. Clave Aleatoria (Fallback)
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32]; rand::thread_rng().fill_bytes(&mut key); general_purpose::STANDARD.encode(key)
 }
 
-// 6. Iniciar Motor VPN
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -276,8 +277,40 @@ pub fn run() {
             intentar_upnp, 
             enviar_archivo, 
             generar_clave_segura,
-            obtener_ip_local_cmd // <--- ¡Importante! Aquí está lo que faltaba
+            obtener_ip_local_cmd
         ])
+        .setup(|app| {
+            // --- MODO FANTASMA (TRAY ICON) ---
+            let quit_i = MenuItem::with_id(app, "quit", "Salir de Mimic Hub", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Mostrar Ventana", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+
+            let _tray = TrayIconBuilder::with_id("tray")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&menu)
+                .on_menu_event(|app, event| {
+                    match event.id.as_ref() {
+                        "quit" => { app.exit(0); }
+                        "show" => { if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }
+                    }
+                })
+                .build(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // EVITAR CIERRE: OCULTAR VENTANA
+                window.hide().unwrap();
+                api.prevent_close();
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
