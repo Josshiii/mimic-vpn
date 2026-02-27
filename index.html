@@ -146,8 +146,9 @@
         const listen = window.__TAURI__.event.listen;
         const SERVER_URL = "wss://mimic-signal.onrender.com"; 
         let ws;
+        let vpnStarted = false; // Estado del Motor
 
-        // --- SISTEMA ID & IP ---
+        // --- SISTEMA ID & IP (Auto-IP) ---
         let myId = localStorage.getItem('mimic_id');
         if (!myId) {
             myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
@@ -216,7 +217,35 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- RED ---
+        // --- LÓGICA DE RED MULTIJUGADOR (NUEVO CEREBRO) ---
+        
+        // 1. ARRANCAR MOTOR (Rust)
+        async function startVpnEngine(key) {
+            if(vpnStarted) return;
+            try {
+                document.getElementById('log-text').textContent = "Iniciando Motor...";
+                // Llamamos a 'iniciar_vpn' en lugar de 'conectar_tunel'
+                await invoke("iniciar_vpn", { 
+                    puertoLocal: document.getElementById('puerto-local').value,
+                    ipVirtual: myAutoIp,
+                    claveB64: key
+                });
+                vpnStarted = true;
+                document.getElementById('log-text').textContent = `Motor Activo (${myAutoIp})`;
+                document.getElementById('log-text').style.color = "#a4d007";
+            } catch(e) { console.error("Error motor:", e); }
+        }
+
+        // 2. AÑADIR PEER (Amigo)
+        async function addPeer(ip, port) {
+            try {
+                const address = ip + ":" + port;
+                const res = await invoke("agregar_peer", { ipDestino: address });
+                console.log("Peer añadido:", address);
+            } catch(e) { console.error(e); }
+        }
+
+        // --- WEBSOCKET Y EVENTOS ---
         function connect() {
             document.getElementById('server-status').textContent = "Conectando...";
             ws = new WebSocket(SERVER_URL);
@@ -227,7 +256,7 @@
                 sendLogin();
             };
 
-            ws.onmessage = (e) => {
+            ws.onmessage = async (e) => {
                 const msg = JSON.parse(e.data);
                 
                 if (msg.type === 'STATE_UPDATE') {
@@ -236,30 +265,59 @@
                 }
                 
                 if (msg.type === 'MATCH') {
-                    startTunnel(msg.peer_ip, msg.peer_port, msg.role, msg.key);
+                    // AQUÍ ESTÁ LA MAGIA MULTIJUGADOR
+                    const key = msg.role === 'HOST' ? window.currentKey : msg.key;
+                    
+                    // A. Aseguramos que el motor esté prendido
+                    await startVpnEngine(key);
+                    
+                    // B. Agregamos al nuevo amigo a la fiesta
+                    await addPeer(msg.peer_ip, msg.peer_port);
+                    
                     enableChat();
+                    document.getElementById('log-text').textContent = "¡NUEVO JUGADOR CONECTADO!";
                 }
 
-                if (msg.type === 'CHAT_MSG') {
-                    addChatMessage(msg.sender, msg.text);
-                }
+                if (msg.type === 'CHAT_MSG') { addChatMessage(msg.sender, msg.text); }
             };
 
-            ws.onclose = () => setTimeout(connect, 3000);
+            ws.onclose = () => { vpnStarted = false; setTimeout(connect, 3000); };
         }
 
-        function sendLogin() {
-            ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: document.getElementById('my-name').value }));
-        }
+        function sendLogin() { ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: document.getElementById('my-name').value })); }
 
         function enableChat() {
             document.getElementById('chat-input').disabled = false;
             document.getElementById('chat-status').style.color = "#a4d007";
-            document.getElementById('chat-box').innerHTML = ""; // Limpiar
+            document.getElementById('chat-box').innerHTML = ""; 
             addChatMessage("", "¡Conectado a la Sala! Di hola.", true);
         }
 
-        // --- RENDERIZADO ---
+        // --- ACCIONES UI ---
+        document.getElementById('btn-host').addEventListener('click', async () => {
+            const code = Math.random().toString(36).substring(7);
+            const secureKey = await invoke("generar_clave_segura");
+            window.currentKey = secureKey; // Host guarda la llave
+            
+            // Host inicia motor inmediatamente
+            await startVpnEngine(secureKey);
+
+            ws.send(JSON.stringify({
+                type: 'HOST', room: code, hostName: document.getElementById('my-name').value,
+                gameName: document.getElementById('my-game').value, gameVer: "v1.0", 
+                payload: document.getElementById('puerto-local').value, key: secureKey
+            }));
+            
+            document.getElementById('log-text').textContent = "Sala Creada (Esperando...)";
+            document.getElementById('btn-host').disabled = true;
+            enableChat();
+        });
+
+        window.join = (code) => {
+            ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: document.getElementById('puerto-local').value }));
+        };
+
+        // --- RENDERIZADO VISUAL ---
         function renderFriends(onlinePlayers) {
             const listEl = document.getElementById('friends-list');
             listEl.innerHTML = "";
@@ -292,42 +350,6 @@
                     </div>`;
             });
             if (!list.innerHTML) list.innerHTML = "<div style='text-align:center;color:#444;margin-top:20px'>No hay salas</div>";
-        }
-
-        // --- ACCIONES ---
-        document.getElementById('btn-host').addEventListener('click', async () => {
-            const code = Math.random().toString(36).substring(7);
-            const secureKey = await invoke("generar_clave_segura");
-            window.currentKey = secureKey;
-            
-            ws.send(JSON.stringify({
-                type: 'HOST', room: code, hostName: document.getElementById('my-name').value,
-                gameName: document.getElementById('my-game').value, gameVer: "v1.0", 
-                payload: document.getElementById('puerto-local').value, key: secureKey
-            }));
-            
-            document.getElementById('log-text').textContent = "Sala Creada";
-            document.getElementById('btn-host').disabled = true;
-            enableChat(); // Habilitar chat para el host
-        });
-
-        window.join = (code) => {
-            ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: document.getElementById('puerto-local').value }));
-        };
-
-        async function startTunnel(ip, port, role, receivedKey) {
-            document.getElementById('log-text').textContent = "Conectando...";
-            const keyToUse = role === 'HOST' ? window.currentKey : receivedKey;
-            try {
-                await invoke("conectar_tunel", { 
-                    ipDestino: ip + ":" + port, 
-                    puertoLocal: document.getElementById('puerto-local').value,
-                    ipVirtual: myAutoIp, 
-                    claveB64: keyToUse 
-                });
-                document.getElementById('log-text').textContent = `Conectado (${myAutoIp})`;
-                document.getElementById('log-text').style.color = "#a4d007";
-            } catch (e) { console.error(e); }
         }
 
         // --- PING SYSTEM ---
