@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 // SEGURIDAD AVANZADA
-use x25519_dalek::{PublicKey, StaticSecret}; // Quitamos EphemeralSecret
+use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
 use rand::RngCore; 
@@ -29,14 +29,11 @@ const FILE_PORT: u16 = 4444;
 
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-// --- 1. GENERAR LLAVES (CORREGIDO) ---
+// --- 1. GENERAR LLAVES (DIFIE-HELLMAN) ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
-    // 1. Generamos 32 bytes aleatorios
     let mut secret_bytes = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut secret_bytes);
-
-    // 2. Creamos la llave Estática directamente
     let secret = StaticSecret::from(secret_bytes);
     let public = PublicKey::from(&secret);
     
@@ -61,6 +58,7 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 
+// --- UTILIDADES ---
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
 
 fn optimizar_windows(p: &str) { 
@@ -89,6 +87,7 @@ fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     }
 }
 
+// --- SISTEMA DE ARCHIVOS (MIMIC DROP) ---
 fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         if let Ok(listener) = TcpListener::bind(format!("0.0.0.0:{}", FILE_PORT)) {
@@ -126,6 +125,7 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
     });
 }
 
+// --- VPN ENGINE ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -155,6 +155,18 @@ fn obtener_ip_local() -> Option<Ipv4Addr> {
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
 }
 
+// --- COMANDOS EXPORTADOS PARA JS ---
+
+// 1. Obtener IP Local (Para Híbrido LAN/WAN)
+#[tauri::command]
+fn obtener_ip_local_cmd() -> String {
+    match obtener_ip_local() {
+        Some(ip) => ip.to_string(),
+        None => "127.0.0.1".to_string()
+    }
+}
+
+// 2. Enviar Archivo P2P
 #[tauri::command]
 fn enviar_archivo(ip_destino: String) -> String {
     let file = rfd::FileDialog::new().set_title("Selecciona archivo").pick_file();
@@ -181,6 +193,7 @@ fn enviar_archivo(ip_destino: String) -> String {
     } "Cancelado".to_string()
 }
 
+// 3. UPnP Rompehielos
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
@@ -192,16 +205,19 @@ fn intentar_upnp(puerto_interno: u16) -> String {
     }
 }
 
+// 4. Agregar Amigo al Switch
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_mut() { table.insert(ip_virtual, ip_destino); return "OK".to_string(); } } "Error".to_string()
 }
 
+// 5. Clave Aleatoria (Fallback)
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32]; rand::thread_rng().fill_bytes(&mut key); general_purpose::STANDARD.encode(key)
 }
 
+// 6. Iniciar Motor VPN
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -252,7 +268,16 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, intentar_upnp, enviar_archivo, generar_clave_segura])
+        .invoke_handler(tauri::generate_handler![
+            iniciar_vpn, 
+            agregar_peer, 
+            generar_identidad, 
+            calcular_secreto, 
+            intentar_upnp, 
+            enviar_archivo, 
+            generar_clave_segura,
+            obtener_ip_local_cmd // <--- ¡Importante! Aquí está lo que faltaba
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
