@@ -130,12 +130,14 @@
         <input id="my-version" value="v1.0">
     </div>
 
-    <div class="status-bar">
+<div class="status-bar">
         <div style="display:flex; gap:10px; align-items:center;">
             <div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
             <span id="log-text">Listo</span>
         </div>
+        
         <div style="display:flex; gap:10px; align-items:center;">
+             <span id="turbo-icon" style="font-size:10px; color:#333; display:none;">⚡ TURBO LZ4</span>
             <span id="ping-text" style="font-family:monospace;">--</span>
             <div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div>
         </div>
@@ -228,18 +230,25 @@
         async function startVpnEngine(key) {
             if(vpnStarted) return;
             try {
-                document.getElementById('log-text').textContent = "Arrancando Switch...";
+                document.getElementById('log-text').textContent = "Iniciando Turbo...";
                 await invoke("iniciar_vpn", { 
                     puertoLocal: document.getElementById('puerto-local').value,
                     ipVirtual: myAutoIp,
                     claveB64: key
                 });
                 vpnStarted = true;
-                document.getElementById('log-text').textContent = `Switch Activo (${myAutoIp})`;
+                
+                // ACTIVAR VISUALIZACIÓN TURBO
+                const turbo = document.getElementById('turbo-icon');
+                turbo.style.display = "inline";
+                turbo.style.color = "#a4d007";
+                turbo.style.textShadow = "0 0 5px #a4d007";
+
+                document.getElementById('log-text').textContent = `Motor Activo (${myAutoIp})`;
                 document.getElementById('log-text').style.color = "#a4d007";
             } catch(e) { console.error("Error motor:", e); }
         }
-
+        
         // NUEVO: Ahora pasamos también la IP VIRTUAL para la tabla de rutas
         async function addPeer(realIp, port, virtualIp) {
             try {
