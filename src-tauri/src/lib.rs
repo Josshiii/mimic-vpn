@@ -12,7 +12,7 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use chacha20poly1305::aead::{Aead, KeyInit}; 
 use rand::RngCore; 
 use base64::{Engine as _, engine::general_purpose}; 
-use lz4_flex::{compress_prepend_size, decompress_size_prepended}; // <--- EL TURBO
+use lz4_flex::{compress_prepend_size, decompress_size_prepended}; 
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
@@ -32,13 +32,11 @@ fn optimizar_windows(puerto: &str) {
 }
 
 // --- FUNCIÓN DE ENVÍO "TURBO" ---
-// 1. Comprime -> 2. Encripta -> 3. Envía
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
-    // A. COMPRESIÓN (LZ4)
-    // Reduce el tamaño del paquete drásticamente antes de encriptar
+    // 1. COMPRESIÓN (LZ4)
     let compressed_data = compress_prepend_size(datos);
 
-    // B. ENCRIPTACIÓN
+    // 2. ENCRIPTACIÓN
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -55,6 +53,7 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
         loop {
+            // 'size' es el tamaño comprimido que llega de internet
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]);
@@ -64,7 +63,6 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
                     if let Ok(decrypted_compressed) = cipher.decrypt(nonce, ciphertext) {
                         
                         // 2. DESCOMPRIMIR (LZ4)
-                        // Intentamos descomprimir. Si falla, descartamos (seguridad extra)
                         if let Ok(original_data) = decompress_size_prepended(&decrypted_compressed) {
                             
                             if original_data == HEARTBEAT_MSG {
@@ -73,7 +71,10 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
                                 if let Ok(mut packet) = session.allocate_send_packet(original_data.len() as u16) {
                                     packet.bytes_mut().copy_from_slice(&original_data);
                                     session.send_packet(packet);
-                                    let _ = app_handle.emit("trafico-entrada", original_data.len());
+                                    
+                                    // --- CORRECCIÓN AQUÍ PARA TELEMETRÍA ---
+                                    // Enviamos [Bytes Internet, Bytes Reales] para calcular el ahorro
+                                    let _ = app_handle.emit("stats-entrada", (size, original_data.len()));
                                 }
                             }
                         }
@@ -137,7 +138,10 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                                         }
                                     }
                                 }
-                                if !table.is_empty() { let _ = app_out.emit("trafico-salida", bytes.len()); }
+                                if !table.is_empty() { 
+                                    // --- CORRECCIÓN TELEMETRÍA SALIDA ---
+                                    let _ = app_out.emit("stats-salida", bytes.len()); 
+                                }
                             }
                         }
                     }
@@ -147,7 +151,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         }
     });
 
-    // Hilo Latido (También comprimido para mantener protocolo uniforme)
+    // Hilo Latido
     let socket_latido = socket_local;
     let cipher_latido = cipher.clone();
     thread::spawn(move || {
