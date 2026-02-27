@@ -1,4 +1,4 @@
-use std::net::{UdpSocket, SocketAddr, SocketAddrV4, Ipv4Addr}; // <--- IMPORTANTE: Tipos de red añadidos
+use std::net::{UdpSocket, SocketAddr, SocketAddrV4, Ipv4Addr}; 
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -79,10 +79,9 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 
 // --- COMANDOS EXPORTADOS ---
 
-// Truco para obtener la IP Local Real (192.168.x.x)
 fn obtener_ip_local() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
-    socket.connect("8.8.8.8:80").ok()?; // No enviamos nada, solo consultamos ruta
+    socket.connect("8.8.8.8:80").ok()?; 
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() {
         return Some(*addr.ip());
     }
@@ -91,25 +90,22 @@ fn obtener_ip_local() -> Option<Ipv4Addr> {
 
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
-    // 1. Obtener nuestra IP Local (Ej: 192.168.1.50)
     let local_ip = match obtener_ip_local() {
         Some(ip) => ip,
         None => return "Error: No se pudo detectar IP Local".to_string(),
     };
 
-    // 2. Buscar Router y Abrir Puerto
     match search_gateway(Default::default()) {
         Ok(gateway) => {
-            // Construimos la dirección local completa (IP + Puerto)
             let local_socket = SocketAddrV4::new(local_ip, puerto_interno);
 
-            // Llamada corregida a add_port (5 argumentos)
+            // CORRECCIÓN AQUÍ: Envolvemos local_socket en SocketAddr::V4(...)
             match gateway.add_port(
                 PortMappingProtocol::UDP,
-                puerto_interno, // Puerto Externo
-                local_socket,   // Destino Local (IP + Puerto Interno)
-                0,              // Duración (0 = Infinito)
-                "MimicHub-UDP"  // Descripción
+                puerto_interno, 
+                SocketAddr::V4(local_socket), // <--- ¡AQUÍ ESTABA EL ERROR!
+                0,              
+                "MimicHub-UDP"  
             ) {
                 Ok(_) => format!("ÉXITO: UPnP abierto en {}:{}", local_ip, puerto_interno),
                 Err(e) => format!("FALLO UPnP: {}", e)
@@ -141,7 +137,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
 
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
     
-    // HILO DE SALIDA SWITCH + TURBO
     let socket_out = socket_local.try_clone().unwrap();
     let cipher_out = cipher.clone();
     let app_out = app_handle.clone();
