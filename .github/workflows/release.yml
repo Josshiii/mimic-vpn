@@ -22,7 +22,6 @@ jobs:
         run: npm install
 
       # PASO CLAVE: Mover wintun.dll A LA CARPETA src-tauri
-      # Esto es necesario para que la configuración "resources": ["wintun.dll"] lo encuentre.
       - name: Prepare Driver for Bundling
         shell: powershell
         run: |
@@ -49,5 +48,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Mimic-Installer
-          path: src-tauri/target/release/bundle/msi/*.msi
+          # --- CAMBIO AQUÍ ---
+          # Antes buscaba en 'msi', ahora busca en 'nsis' y archivos .exe
+          path: src-tauri/target/release/bundle/nsis/*.exe 
           if-no-files-found: warn
