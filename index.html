@@ -69,6 +69,28 @@
         .chat-input-area { padding: 10px; background: #1e2126; border-top: 1px solid #000; }
         #chat-input { margin: 0; background: #2f3640; border: none; padding: 10px; font-size: 12px; }
 
+        /* --- NUEVO CSS: PANEL TELEMETRÍA --- */
+        .telemetry-panel {
+            background: #0b0d10;
+            border-top: 1px solid #333;
+            padding: 10px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+            font-family: monospace;
+        }
+        .stat-box {
+            background: #171a21;
+            padding: 5px;
+            border-radius: 4px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .stat-label { font-size: 9px; color: #666; text-transform: uppercase; }
+        .stat-value { font-size: 14px; font-weight: bold; color: #fff; }
+        .stat-turbo { color: #a4d007; font-size: 10px; }
+
         /* ESTADO */
         .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; }
         .hidden { display: none; }
@@ -121,6 +143,18 @@
             <div class="chat-input-area">
                 <input id="chat-input" placeholder="Escribe un mensaje..." disabled onkeypress="handleChat(event)">
             </div>
+            
+            <div class="telemetry-panel">
+                <div class="stat-box">
+                    <span class="stat-label">VELOCIDAD</span>
+                    <span class="stat-value" id="speed-display">0 KB/s</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">TURBO SAVINGS</span>
+                    <span class="stat-value" id="turbo-display">--</span>
+                    <span class="stat-turbo">LZ4 ACTIVO</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -130,7 +164,7 @@
         <input id="my-version" value="v1.0">
     </div>
 
-<div class="status-bar">
+    <div class="status-bar">
         <div style="display:flex; gap:10px; align-items:center;">
             <div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
             <span id="log-text">Listo</span>
@@ -144,13 +178,13 @@
     </div>
 
     <script type="module">
-       const invoke = window.__TAURI__.core.invoke;
+        const invoke = window.__TAURI__.core.invoke;
         const listen = window.__TAURI__.event.listen;
         const SERVER_URL = "wss://mimic-signal.onrender.com"; 
         let ws;
         let vpnStarted = false; 
 
-        // --- SISTEMA ID & IP ---
+        // --- SISTEMA ID & IP (Auto-IP) ---
         let myId = localStorage.getItem('mimic_id');
         if (!myId) {
             myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
@@ -208,7 +242,7 @@
         };
         window.copyId = () => navigator.clipboard.writeText(myId);
 
-        // --- CHAT Y RENDERIZADO (IGUAL QUE ANTES) ---
+        // --- CHAT Y RENDERIZADO ---
         window.handleChat = (e) => {
             if (e.key === 'Enter') {
                 const input = document.getElementById('chat-input');
@@ -225,7 +259,7 @@
             box.appendChild(div); box.scrollTop = box.scrollHeight;
         }
 
-        // --- LÓGICA DE RED INTELIGENTE (SWITCH) ---
+        // --- LÓGICA DE RED INTELIGENTE (SWITCH + TURBO) ---
         
         async function startVpnEngine(key) {
             if(vpnStarted) return;
@@ -238,7 +272,7 @@
                 });
                 vpnStarted = true;
                 
-                // ACTIVAR VISUALIZACIÓN TURBO
+                // ACTIVAR VISUALIZACIÓN TURBO (Icono)
                 const turbo = document.getElementById('turbo-icon');
                 turbo.style.display = "inline";
                 turbo.style.color = "#a4d007";
@@ -248,17 +282,73 @@
                 document.getElementById('log-text').style.color = "#a4d007";
             } catch(e) { console.error("Error motor:", e); }
         }
-        
-        // NUEVO: Ahora pasamos también la IP VIRTUAL para la tabla de rutas
+
+        // AÑADIR PEER CON RUTA
         async function addPeer(realIp, port, virtualIp) {
             try {
                 const address = realIp + ":" + port;
                 await invoke("agregar_peer", { 
                     ipDestino: address,
-                    ipVirtual: virtualIp // <--- DATO CLAVE PARA EL SWITCH
+                    ipVirtual: virtualIp 
                 });
                 console.log(`Ruta añadida: ${virtualIp} -> ${address}`);
             } catch(e) { console.error(e); }
+        }
+
+        // --- NUEVO MOTOR DE TELEMETRÍA (ESTADÍSTICAS) ---
+        let bytesIn_Net = 0;   // Lo que llega de internet (Comprimido)
+        let bytesIn_Game = 0;  // Lo que entregamos al juego (Descomprimido)
+        let lastCheck = Date.now();
+
+        // Escuchar datos de entrada (Bajada)
+        listen('stats-entrada', (event) => {
+            const [netSize, gameSize] = event.payload;
+            bytesIn_Net += netSize;
+            bytesIn_Game += gameSize;
+            animateLed(); 
+        });
+
+        // Escuchar datos de salida (Subida)
+        listen('stats-salida', (event) => {
+            animateLed();
+        });
+
+        // Bucle de actualización (cada 1 segundo)
+        setInterval(() => {
+            const now = Date.now();
+            const duration = (now - lastCheck) / 1000; // Segundos pasados
+            lastCheck = now;
+
+            if (bytesIn_Game > 0) {
+                // 1. Calcular Velocidad (KB/s del juego real)
+                const speed = (bytesIn_Game / 1024) / duration;
+                document.getElementById('speed-display').textContent = speed.toFixed(1) + " KB/s";
+
+                // 2. Calcular Ahorro Turbo (Eficiencia)
+                const savings = 100 - ((bytesIn_Net / bytesIn_Game) * 100);
+                const displaySavings = savings > 0 && savings < 100 ? savings.toFixed(0) : "0";
+                
+                document.getElementById('turbo-display').textContent = displaySavings + "%";
+                document.getElementById('turbo-display').style.color = "#a4d007";
+                
+                // Resetear contadores
+                bytesIn_Net = 0;
+                bytesIn_Game = 0;
+            } else {
+                document.getElementById('speed-display').textContent = "0 KB/s";
+                document.getElementById('turbo-display').textContent = "--";
+                document.getElementById('turbo-display').style.color = "#666";
+            }
+        }, 1000);
+
+        function animateLed() {
+            const led = document.getElementById('traffic-led');
+            led.style.background = "#a4d007"; 
+            led.style.boxShadow = "0 0 5px #a4d007";
+            setTimeout(()=> {
+                led.style.background="#333";
+                led.style.boxShadow = "none";
+            }, 50);
         }
 
         // --- WEBSOCKET ---
@@ -277,10 +367,7 @@
                 if (msg.type === 'MATCH') {
                     const key = msg.role === 'HOST' ? window.currentKey : msg.key;
                     await startVpnEngine(key);
-                    
-                    // AÑADIMOS RUTA INTELIGENTE
                     await addPeer(msg.peer_ip, msg.peer_port, msg.peer_virtual_ip);
-                    
                     enableChat();
                     playSound('join');
                     document.getElementById('log-text').textContent = "¡RUTA ESTABLECIDA!";
@@ -307,7 +394,7 @@
                 type: 'HOST', room: code, hostName: document.getElementById('my-name').value,
                 gameName: document.getElementById('my-game').value, gameVer: "v1.0", 
                 payload: document.getElementById('puerto-local').value, 
-                virtualIp: myAutoIp, // <--- NUEVO
+                virtualIp: myAutoIp, 
                 key: secureKey
             }));
             
@@ -321,7 +408,7 @@
             ws.send(JSON.stringify({ 
                 type: 'JOIN', room: code, 
                 payload: document.getElementById('puerto-local').value,
-                virtualIp: myAutoIp // <--- NUEVO
+                virtualIp: myAutoIp 
             }));
         };
 
@@ -361,7 +448,6 @@
         });
 
         connect();
-        listen('trafico-entrada', () => { const led = document.getElementById('traffic-led'); led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50); });
     </script>
 </body>
 </html>
