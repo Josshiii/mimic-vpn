@@ -11,10 +11,17 @@ tauri-build = { version = "2.0", features = [] }
 
 # Librerías (Ingredientes)
 [dependencies]
-tauri = { version = "2.0", features = [] }
-tauri-plugin-opener = "2.0"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+wintun = "0.4"
+# Seguridad
+chacha20poly1305 = "0.10"
+rand = "0.8"
+base64 = "0.21"
+# --- NUEVO: MOTOR TURBO ---
+lz4_flex = "0.11"
 
 # VPN Driver
 wintun = "0.5.0"
