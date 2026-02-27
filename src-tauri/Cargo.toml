@@ -9,20 +9,23 @@ edition = "2021"
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
 
-# Librerías (Ingredientes)
+# Librerías (Ingredientes de alto rendimiento)
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# --- VPN DRIVER ---
+# --- MOTOR DE RED (Driver VPN) ---
 wintun = "0.4"
 
-# --- SEGURIDAD (Encriptación Militar) ---
+# --- SEGURIDAD (Criptografía de Grado Militar) ---
 chacha20poly1305 = "0.10"
 rand = "0.8"
 base64 = "0.21"
 
-# --- NUEVO: MOTOR TURBO (Compresión LZ4) ---
+# --- VELOCIDAD (Compresión LZ4) ---
 lz4_flex = "0.11"
+
+# --- CONECTIVIDAD (Apertura Automática de Puertos UPnP) ---
+igd-next = "0.14"
