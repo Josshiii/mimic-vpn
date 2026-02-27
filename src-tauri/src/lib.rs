@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{Read, Write}; 
 use std::path::{Path, PathBuf};
 
-// SEGURIDAD AVANZADA
+// SEGURIDAD AVANZADA (Imports corregidos para v2.0)
 use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -35,21 +35,20 @@ fn generar_identidad() -> (String, String) {
     let secret = EphemeralSecret::random_from_rng(rand::thread_rng());
     let public = PublicKey::from(&secret);
     
-    // Convertimos a Base64 para que JS las entienda
-    // OJO: StaticSecret se usa para poder serializar la privada temporalmente
-    let secret_bytes = StaticSecret::from(secret).to_bytes();
+    // Serializamos. StaticSecret se usa para guardar la privada generada
+    let secret_static = StaticSecret::from(secret);
+    let secret_bytes = secret_static.to_bytes();
     let public_bytes = public.to_bytes();
     
     (
-        general_purpose::STANDARD.encode(secret_bytes), // Privada (Guardar en JS memory)
-        general_purpose::STANDARD.encode(public_bytes)  // Pública (Enviar al server)
+        general_purpose::STANDARD.encode(secret_bytes), 
+        general_purpose::STANDARD.encode(public_bytes)
     )
 }
 
 // --- 2. CALCULAR SECRETO COMPARTIDO ---
 #[tauri::command]
 fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
-    // Decodificar Base64
     let priv_bytes = general_purpose::STANDARD.decode(mi_privada).unwrap_or(vec![0; 32]);
     let pub_bytes = general_purpose::STANDARD.decode(su_publica).unwrap_or(vec![0; 32]);
 
@@ -58,20 +57,18 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     let mis_secretos = StaticSecret::from(match <[u8; 32]>::try_from(priv_bytes.as_slice()) { Ok(b) => b, Err(_) => return "ERROR".to_string() });
     let sus_publicos = PublicKey::from(match <[u8; 32]>::try_from(pub_bytes.as_slice()) { Ok(b) => b, Err(_) => return "ERROR".to_string() });
 
-    // La Magia: Diffie-Hellman
     let shared_secret = mis_secretos.diffie_hellman(&sus_publicos);
-    
-    // Retornamos la llave lista para ChaCha20
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 
-// ... (Resto de funciones: inicializar_tabla, optimizar_windows, enviar_paquete_turbo IGUALES) ...
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
+
 fn optimizar_windows(p: &str) { 
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", p), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", p)]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Files\"", "dir=in", "action=allow", "protocol=TCP", &format!("localport={}", FILE_PORT)]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
 }
+
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
@@ -79,7 +76,9 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
         let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg); let _ = socket.send_to(&final_packet, destino);
     }
 }
-fn obtener_ruta_unica(mut ruta: PathBuf) -> PathBuf {
+
+// CORREGIDO: Eliminado 'mut' innecesario en el argumento
+fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
     let ext = ruta.extension().unwrap_or_default().to_string_lossy().to_string();
@@ -90,6 +89,7 @@ fn obtener_ruta_unica(mut ruta: PathBuf) -> PathBuf {
         let new_path = parent.join(name); if !new_path.exists() { return new_path; } i += 1;
     }
 }
+
 fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         if let Ok(listener) = TcpListener::bind(format!("0.0.0.0:{}", FILE_PORT)) {
@@ -104,11 +104,16 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
                             let name_len = name_len_buf[0] as usize; let mut name_buf = vec![0u8; name_len];
                             if socket.read_exact(&mut name_buf).is_ok() {
                                 if let Ok(raw_filename) = String::from_utf8(name_buf) {
-                                    let safe_filename = Path::new(&raw_filename).file_name().unwrap_or_default();
+                                    
+                                    // CORREGIDO: Uso de 'dirs' para descargas
                                     if let Some(mut download_path) = dirs::download_dir() {
-                                        download_path.push(safe_filename);
+                                        // Limpieza del nombre de archivo
+                                        let safe_name = Path::new(&raw_filename).file_name().unwrap_or_default();
+                                        download_path.push(safe_name);
+                                        
                                         let final_path = obtener_ruta_unica(download_path);
                                         let display_name = final_path.file_name().unwrap().to_string_lossy().to_string();
+                                        
                                         if let Ok(mut file) = File::create(final_path) {
                                             let mut buffer = [0u8; 8192]; let mut received_bytes = 0;
                                             while let Ok(n) = socket.read(&mut buffer) {
@@ -126,6 +131,7 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
         }
     });
 }
+
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -149,12 +155,12 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         }
     });
 }
+
 fn obtener_ip_local() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; 
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
 }
 
-// ... (COMANDOS RESTANTES: enviar_archivo, intentar_upnp, agregar_peer, iniciar_vpn) ...
 #[tauri::command]
 fn enviar_archivo(ip_destino: String) -> String {
     let file = rfd::FileDialog::new().set_title("Selecciona archivo").pick_file();
@@ -180,6 +186,7 @@ fn enviar_archivo(ip_destino: String) -> String {
         return "Enviando...".to_string();
     } "Cancelado".to_string()
 }
+
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
@@ -190,10 +197,17 @@ fn intentar_upnp(puerto_interno: u16) -> String {
         }, Err(_) => "Router no responde".to_string()
     }
 }
+
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_mut() { table.insert(ip_virtual, ip_destino); return "OK".to_string(); } } "Error".to_string()
 }
+
+#[tauri::command]
+fn generar_clave_segura() -> String {
+    let mut key = [0u8; 32]; rand::thread_rng().fill_bytes(&mut key); general_purpose::STANDARD.encode(key)
+}
+
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -244,8 +258,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // REGISTRAMOS NUEVOS COMANDOS DE SEGURIDAD
-        .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, intentar_upnp, enviar_archivo])
+        .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, intentar_upnp, enviar_archivo, generar_clave_segura])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
