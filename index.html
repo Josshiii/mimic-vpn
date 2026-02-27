@@ -142,20 +142,19 @@
     </div>
 
     <script type="module">
-        const invoke = window.__TAURI__.core.invoke;
+       const invoke = window.__TAURI__.core.invoke;
         const listen = window.__TAURI__.event.listen;
         const SERVER_URL = "wss://mimic-signal.onrender.com"; 
         let ws;
         let vpnStarted = false; 
 
-        // --- SISTEMA ID & IP (Auto-IP) ---
+        // --- SISTEMA ID & IP ---
         let myId = localStorage.getItem('mimic_id');
         if (!myId) {
             myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
             localStorage.setItem('mimic_id', myId);
         }
         document.getElementById('my-id-display').textContent = myId;
-
         function generateIpFromId(id) {
             let hash = 0;
             for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
@@ -172,101 +171,84 @@
             const gain = audioCtx.createGain();
             osc.connect(gain);
             gain.connect(audioCtx.destination);
-            
-            if (type === 'msg') { // Ping agudo
-                osc.type = 'sine';
-                osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            if (type === 'msg') {
+                osc.type = 'sine'; osc.frequency.setValueAtTime(800, audioCtx.currentTime);
                 osc.frequency.exponentialRampToValueAtTime(400, audioCtx.currentTime + 0.1);
-                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.1);
-            } else if (type === 'join') { // Acorde positivo
-                osc.type = 'triangle';
-                osc.frequency.setValueAtTime(440, audioCtx.currentTime);
+            } else if (type === 'join') {
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(440, audioCtx.currentTime);
                 osc.frequency.linearRampToValueAtTime(880, audioCtx.currentTime + 0.2);
-                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
             }
         }
 
-        // --- PERFIL ---
+        // --- PERFIL Y AMIGOS ---
         let savedName = localStorage.getItem('mimic_name') || "Jugador";
         document.getElementById('my-name').value = savedName;
         updateProfileUI(savedName);
-
         document.getElementById('my-name').addEventListener('input', (e) => {
-            localStorage.setItem('mimic_name', e.target.value);
-            updateProfileUI(e.target.value);
+            localStorage.setItem('mimic_name', e.target.value); updateProfileUI(e.target.value);
             if(ws && ws.readyState === 1) sendLogin(); 
         });
-
         function updateProfileUI(name) {
             document.getElementById('ui-name-display').textContent = name;
             document.getElementById('ui-avatar').textContent = name.charAt(0).toUpperCase();
         }
-
-        // --- AMIGOS ---
         let friends = JSON.parse(localStorage.getItem('mimic_friends')) || [];
         window.addFriend = () => {
             const code = document.getElementById('friend-code-input').value.trim().toUpperCase();
             if (!code || code === myId || friends.some(f => f.id === code)) return;
             friends.push({ id: code, name: `Amigo ${code}` });
             localStorage.setItem('mimic_friends', JSON.stringify(friends));
-            renderFriends([]);
-            document.getElementById('friend-code-input').value = "";
+            renderFriends([]); document.getElementById('friend-code-input').value = "";
         };
         window.copyId = () => navigator.clipboard.writeText(myId);
 
-        // --- CHAT SYSTEM ---
+        // --- CHAT Y RENDERIZADO (IGUAL QUE ANTES) ---
         window.handleChat = (e) => {
             if (e.key === 'Enter') {
                 const input = document.getElementById('chat-input');
                 const text = input.value.trim();
-                if (text) {
-                    ws.send(JSON.stringify({ type: 'CHAT', sender: savedName, text: text }));
-                    input.value = "";
-                }
+                if (text) { ws.send(JSON.stringify({ type: 'CHAT', sender: savedName, text: text })); input.value = ""; }
             }
         };
-
         function addChatMessage(sender, text, isSystem = false) {
             const box = document.getElementById('chat-box');
             const div = document.createElement('div');
             div.className = "msg";
-            if (isSystem) {
-                div.innerHTML = `<div class="sys-msg">${text}</div>`;
-            } else {
-                div.innerHTML = `<span class="msg-sender">${sender}:</span><span class="msg-text">${text}</span>`;
-            }
-            box.appendChild(div);
-            box.scrollTop = box.scrollHeight;
+            if (isSystem) div.innerHTML = `<div class="sys-msg">${text}</div>`;
+            else div.innerHTML = `<span class="msg-sender">${sender}:</span><span class="msg-text">${text}</span>`;
+            box.appendChild(div); box.scrollTop = box.scrollHeight;
         }
 
-        // --- LÓGICA DE RED MULTIJUGADOR ---
+        // --- LÓGICA DE RED INTELIGENTE (SWITCH) ---
         
-        // 1. ARRANCAR MOTOR (Rust)
         async function startVpnEngine(key) {
             if(vpnStarted) return;
             try {
-                document.getElementById('log-text').textContent = "Iniciando Motor...";
+                document.getElementById('log-text').textContent = "Arrancando Switch...";
                 await invoke("iniciar_vpn", { 
                     puertoLocal: document.getElementById('puerto-local').value,
                     ipVirtual: myAutoIp,
                     claveB64: key
                 });
                 vpnStarted = true;
-                document.getElementById('log-text').textContent = `Motor Activo (${myAutoIp})`;
+                document.getElementById('log-text').textContent = `Switch Activo (${myAutoIp})`;
                 document.getElementById('log-text').style.color = "#a4d007";
             } catch(e) { console.error("Error motor:", e); }
         }
 
-        // 2. AÑADIR PEER (Amigo)
-        async function addPeer(ip, port) {
+        // NUEVO: Ahora pasamos también la IP VIRTUAL para la tabla de rutas
+        async function addPeer(realIp, port, virtualIp) {
             try {
-                const address = ip + ":" + port;
-                const res = await invoke("agregar_peer", { ipDestino: address });
-                console.log("Peer añadido:", address);
+                const address = realIp + ":" + port;
+                await invoke("agregar_peer", { 
+                    ipDestino: address,
+                    ipVirtual: virtualIp // <--- DATO CLAVE PARA EL SWITCH
+                });
+                console.log(`Ruta añadida: ${virtualIp} -> ${address}`);
             } catch(e) { console.error(e); }
         }
 
@@ -274,139 +256,103 @@
         function connect() {
             document.getElementById('server-status').textContent = "Conectando...";
             ws = new WebSocket(SERVER_URL);
-
             ws.onopen = () => {
                 document.getElementById('server-status').textContent = "EN LÍNEA";
                 document.getElementById('server-status').style.color = "#a4d007";
                 sendLogin();
             };
-
             ws.onmessage = async (e) => {
                 const msg = JSON.parse(e.data);
-                
-                if (msg.type === 'STATE_UPDATE') {
-                    renderLobbies(msg.lobbies);
-                    renderFriends(msg.players);
-                }
+                if (msg.type === 'STATE_UPDATE') { renderLobbies(msg.lobbies); renderFriends(msg.players); }
                 
                 if (msg.type === 'MATCH') {
-                    // AQUÍ ESTÁ LA MAGIA MULTIJUGADOR
                     const key = msg.role === 'HOST' ? window.currentKey : msg.key;
-                    
-                    // A. Aseguramos que el motor esté prendido
                     await startVpnEngine(key);
                     
-                    // B. Agregamos al nuevo amigo a la fiesta
-                    await addPeer(msg.peer_ip, msg.peer_port);
+                    // AÑADIMOS RUTA INTELIGENTE
+                    await addPeer(msg.peer_ip, msg.peer_port, msg.peer_virtual_ip);
                     
                     enableChat();
-                    
-                    // Sonido y Notificación
                     playSound('join');
-                    document.getElementById('log-text').textContent = "¡NUEVO JUGADOR CONECTADO!";
+                    document.getElementById('log-text').textContent = "¡RUTA ESTABLECIDA!";
                 }
-
                 if (msg.type === 'CHAT_MSG') { 
                     addChatMessage(msg.sender, msg.text);
                     if(document.hidden) playSound('msg');
                 }
             };
-
             ws.onclose = () => { vpnStarted = false; setTimeout(connect, 3000); };
         }
 
         function sendLogin() { ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: document.getElementById('my-name').value })); }
-
-        function enableChat() {
-            document.getElementById('chat-input').disabled = false;
-            document.getElementById('chat-status').style.color = "#a4d007";
-            document.getElementById('chat-box').innerHTML = ""; 
-            addChatMessage("", "¡Conectado a la Sala! Di hola.", true);
-        }
 
         // --- ACCIONES UI ---
         document.getElementById('btn-host').addEventListener('click', async () => {
             const code = Math.random().toString(36).substring(7);
             const secureKey = await invoke("generar_clave_segura");
             window.currentKey = secureKey; 
-            
-            // Host inicia motor inmediatamente
             await startVpnEngine(secureKey);
-
+            
+            // HOST ENVÍA SU IP VIRTUAL AHORA
             ws.send(JSON.stringify({
                 type: 'HOST', room: code, hostName: document.getElementById('my-name').value,
                 gameName: document.getElementById('my-game').value, gameVer: "v1.0", 
-                payload: document.getElementById('puerto-local').value, key: secureKey
+                payload: document.getElementById('puerto-local').value, 
+                virtualIp: myAutoIp, // <--- NUEVO
+                key: secureKey
             }));
             
-            document.getElementById('log-text').textContent = "Sala Creada (Esperando...)";
+            document.getElementById('log-text').textContent = "Sala Lista";
             document.getElementById('btn-host').disabled = true;
             enableChat();
         });
 
         window.join = (code) => {
-            ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: document.getElementById('puerto-local').value }));
+            // CLIENTE ENVÍA SU IP VIRTUAL AL UNIRSE
+            ws.send(JSON.stringify({ 
+                type: 'JOIN', room: code, 
+                payload: document.getElementById('puerto-local').value,
+                virtualIp: myAutoIp // <--- NUEVO
+            }));
         };
 
-        // --- RENDERIZADO VISUAL ---
+        function enableChat() {
+            document.getElementById('chat-input').disabled = false;
+            document.getElementById('chat-status').style.color = "#a4d007";
+            document.getElementById('chat-box').innerHTML = ""; 
+            addChatMessage("", "¡Conexión de Alta Velocidad Activa!", true);
+        }
         function renderFriends(onlinePlayers) {
-            const listEl = document.getElementById('friends-list');
-            listEl.innerHTML = "";
+            const listEl = document.getElementById('friends-list'); listEl.innerHTML = "";
             friends.forEach(friend => {
                 const onlineData = onlinePlayers.find(p => p.id === friend.id);
                 let statusClass = onlineData ? (onlineData.status === "Jugando" ? "playing" : "online") : "";
                 if(onlineData) friend.name = onlineData.name;
-                
-                listEl.innerHTML += `
-                    <div class="friend-item">
-                        <div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div>
-                        <div class="f-name ${statusClass}">${friend.name}</div>
-                    </div>`;
+                listEl.innerHTML += `<div class="friend-item"><div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div><div class="f-name ${statusClass}">${friend.name}</div></div>`;
             });
             localStorage.setItem('mimic_friends', JSON.stringify(friends));
         }
-
         function renderLobbies(lobbies) {
-            const list = document.getElementById('lobby-list');
-            list.innerHTML = "";
+            const list = document.getElementById('lobby-list'); list.innerHTML = "";
             Object.keys(lobbies).forEach(code => {
                 const l = lobbies[code];
-                list.innerHTML += `
-                    <div class="lobby-card">
-                        <div>
-                            <div style="font-weight:bold; color:#fff;">${l.gameName}</div>
-                            <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
-                        </div>
-                        <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
-                    </div>`;
+                list.innerHTML += `<div class="lobby-card"><div><div style="font-weight:bold; color:#fff;">${l.gameName}</div><div style="font-size:11px; color:#888;">Host: ${l.hostName}</div></div><button class="btn-join" onclick="window.join('${code}')">UNIRSE</button></div>`;
             });
             if (!list.innerHTML) list.innerHTML = "<div style='text-align:center;color:#444;margin-top:20px'>No hay salas</div>";
         }
 
-        // --- PING SYSTEM ---
-        let lastPingTime = Date.now();
-        let pingInterval;
+        let lastPingTime = Date.now(); let pingInterval;
         listen('evento-ping', () => {
             lastPingTime = Date.now();
-            document.getElementById('ping-dot').style.background = "#a4d007";
-            document.getElementById('ping-dot').style.boxShadow = "0 0 8px #a4d007";
-            document.getElementById('ping-text').textContent = "ONLINE";
-            document.getElementById('ping-text').style.color = "#a4d007";
+            document.getElementById('ping-dot').style.background = "#a4d007"; document.getElementById('ping-dot').style.boxShadow = "0 0 8px #a4d007";
+            document.getElementById('ping-text').textContent = "ONLINE"; document.getElementById('ping-text').style.color = "#a4d007";
             setTimeout(() => document.getElementById('ping-dot').style.boxShadow = "none", 200);
-            
             clearTimeout(pingInterval);
-            pingInterval = setTimeout(() => {
-                document.getElementById('ping-dot').style.background = "#ef4444";
-                document.getElementById('ping-text').textContent = "LOST";
-                document.getElementById('ping-text').style.color = "#ef4444";
-            }, 5000);
+            pingInterval = setTimeout(() => { document.getElementById('ping-dot').style.background = "#ef4444"; document.getElementById('ping-text').textContent = "LOST"; document.getElementById('ping-text').style.color = "#ef4444"; }, 5000);
         });
 
         connect();
-        listen('trafico-entrada', () => {
-            const led = document.getElementById('traffic-led');
-            led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
-        });
+        listen('trafico-entrada', () => { const led = document.getElementById('traffic-led'); led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50); });
     </script>
 </body>
 </html>
