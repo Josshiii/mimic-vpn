@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
+use std::os::windows::process::CommandExt; // Para ocultar ventanas de CMD
 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -13,10 +14,32 @@ use base64::{Engine as _, engine::general_purpose};
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
+const CREATE_NO_WINDOW: u32 = 0x08000000; // Flag para que no salten ventanas negras
 
-// Variable Global para la lista de amigos (Peers)
-// Esto permite agregar amigos sin detener el motor
 static PEERS_GLOBAL: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+// --- UTILIDADES DEL SISTEMA ---
+
+// Esta función convierte a Mimic Hub en el REY de la red
+fn optimizar_windows(puerto: &str) {
+    // 1. Abrir Firewall (Regla de entrada y salida para nuestro puerto)
+    let _ = Command::new("netsh")
+        .args(&["advfirewall", "firewall", "add", "rule", 
+                &format!("name=\"MimicHub-UDP-{}\"", puerto), 
+                "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto)])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    // 2. Dar Prioridad Máxima al Adaptador (Métrica 1 = La más alta)
+    // Esto hace que los juegos busquen partidas aquí primero
+    let _ = Command::new("powershell")
+        .args(&["-Command", &format!(
+            "Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", 
+            NOMBRE_ADAPTADOR
+        )])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+}
 
 // --- AUXILIAR DE ENCRIPTACIÓN ---
 fn enviar_paquete_seguro(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
@@ -27,13 +50,11 @@ fn enviar_paquete_seguro(socket: &UdpSocket, destino: &str, datos: &[u8], cipher
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, datos) {
         let mut final_packet = nonce_bytes.to_vec();
         final_packet.extend_from_slice(&encrypted_msg);
-        // Ignoramos errores de envío (si el peer se desconectó, no pasa nada)
         let _ = socket.send_to(&final_packet, destino);
     }
 }
 
-// --- HILO DE ENTRADA (Internet -> PC) ---
-// Este hilo recibe paquetes, los desencripta y los mete al adaptador virtual
+// --- HILO DE ENTRADA ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(
     session: Arc<wintun::Session>, 
     socket: UdpSocket, 
@@ -70,12 +91,8 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     
-    // 1. Limpiamos la lista global al iniciar una nueva sesión
-    if let Ok(mut lista) = PEERS_GLOBAL.lock() { 
-        lista.clear(); 
-    }
+    if let Ok(mut lista) = PEERS_GLOBAL.lock() { lista.clear(); }
 
-    // 2. Decodificar Clave
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) {
         Ok(k) => k, Err(_) => return "Clave inválida".to_string(),
     };
@@ -83,7 +100,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let key = Key::from_slice(&key_bytes);
     let cipher = Arc::new(ChaCha20Poly1305::new(key));
 
-    // 3. Configurar Wintun
     let wintun = unsafe { wintun::load_from_path("wintun.dll") };
     if wintun.is_err() { return "Falta wintun.dll".to_string(); }
     let wintun = wintun.unwrap();
@@ -94,22 +110,23 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         Ok(s) => s, Err(e) => return format!("Error sesión: {:?}", e),
     };
 
-    // 4. Configurar IP
-    let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).output();
+    // Configurar IP
+    let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK])
+        .creation_flags(CREATE_NO_WINDOW).output();
 
-    // 5. Abrir Socket UDP
+    // OPTIMIZACIÓN AUTOMÁTICA (NUEVO) 🚀
+    // Configuramos Firewall y Prioridad de adaptador
+    optimizar_windows(&puerto_local);
+
     let socket_local = match UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)) {
         Ok(s) => s, Err(e) => return format!("Puerto ocupado: {}", e),
     };
 
     let session_arc = Arc::new(session);
 
-    // --- LANZAMIENTO DE HILOS ---
-    
-    // A. Hilo de Entrada (Recibe datos)
+    // Hilos
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
     
-    // B. Hilo de Salida (Lee del adaptador -> Envía a TODOS los peers)
     let socket_out = socket_local.try_clone().unwrap();
     let cipher_out = cipher.clone();
     let app_out = app_handle.clone();
@@ -121,14 +138,11 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                 Ok(packet) => {
                     let bytes = packet.bytes();
                     if bytes.len() > 0 {
-                        // Accedemos a la lista GLOBAL de amigos
                         if let Ok(lista) = PEERS_GLOBAL.lock() {
                             for ip in lista.iter() {
                                 enviar_paquete_seguro(&socket_out, ip, bytes, &cipher_out);
                             }
-                            if !lista.is_empty() { 
-                                let _ = app_out.emit("trafico-salida", bytes.len()); 
-                            }
+                            if !lista.is_empty() { let _ = app_out.emit("trafico-salida", bytes.len()); }
                         }
                     }
                 },
@@ -137,10 +151,8 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         }
     });
 
-    // C. Hilo de Latido (Mantiene vivo el NAT de TODOS los peers)
     let socket_latido = socket_local;
     let cipher_latido = cipher.clone();
-    
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
@@ -152,7 +164,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         }
     });
 
-    format!("VPN MULTIJUGADOR INICIADA")
+    format!("VPN OPTIMIZADA Y ACTIVA")
 }
 
 #[tauri::command]
@@ -160,11 +172,10 @@ fn agregar_peer(ip_destino: String) -> String {
     if let Ok(mut lista) = PEERS_GLOBAL.lock() {
         if !lista.contains(&ip_destino) {
             lista.push(ip_destino.clone());
-            println!("NUEVO JUGADOR AÑADIDO: {}", ip_destino);
-            return format!("Conectado a {}", ip_destino);
+            return format!("OK");
         }
     }
-    "Ya estaba conectado".to_string()
+    "Existente".to_string()
 }
 
 #[tauri::command]
