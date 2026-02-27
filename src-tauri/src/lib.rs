@@ -7,11 +7,10 @@ use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
 use std::fs::File; 
-use std::io::{Read, Write, Cursor}; 
+use std::io::{Read, Write}; 
 use std::path::{Path, PathBuf};
-use byteorder::{BigEndian, ReadBytesExt}; // Para leer respuesta STUN
 
-// SEGURIDAD & UTILIDADES
+// SEGURIDAD AVANZADA
 use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -24,68 +23,15 @@ use igd_next::PortMappingProtocol;
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
-const HOLE_PUNCH_MSG: &[u8] = b"__MIMIC_PUNCH__"; // El puñetazo
+const HOLE_PUNCH_MSG: &[u8] = b"__MIMIC_PUNCH__";
 const MAGIC_HEADER: &[u8; 8] = b"MIMIC_V1"; 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const FILE_PORT: u16 = 4444; 
-const STUN_SERVER: &str = "stun.l.google.com:19302"; // Servidor público de Google
 
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 
-// --- FUNCIONES STUN (DESCUBRIMIENTO DE IP PÚBLICA) ---
-fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
-    if response.len() < 20 { return None; }
-    // Revisar si es respuesta de éxito (0x0101)
-    if response[0] != 0x01 || response[1] != 0x01 { return None; }
-    
-    let mut cursor = Cursor::new(&response[20..]); // Saltamos header
-    while let Ok(attr_type) = cursor.read_u16::<BigEndian>() {
-        let attr_len = cursor.read_u16::<BigEndian>().unwrap_or(0);
-        // Atributo 0x0020 es XOR-MAPPED-ADDRESS
-        if attr_type == 0x0020 {
-            let _family = cursor.read_u8().unwrap_or(0); 
-            let _port = cursor.read_u8().unwrap_or(0); // Ignorar
-            let xor_port = cursor.read_u16::<BigEndian>().unwrap_or(0);
-            let xor_ip = cursor.read_u32::<BigEndian>().unwrap_or(0);
-            
-            // Decodificar XOR (Magic Cookie es 0x2112A442)
-            let port = xor_port ^ 0x2112;
-            let ip_int = xor_ip ^ 0x2112A442;
-            let ip = Ipv4Addr::from(ip_int);
-            
-            return Some((ip.to_string(), port));
-        }
-        // Saltar al siguiente atributo si no es el que queremos
-        if cursor.position() + attr_len as u64 > response.len() as u64 { break; }
-        cursor.set_position(cursor.position() + attr_len as u64);
-    }
-    None
-}
-
-fn realizar_consulta_stun(socket: &UdpSocket) -> Option<(String, u16)> {
-    // Paquete STUN Binding Request básico
-    let mut packet = vec![0u8; 20];
-    packet[0] = 0x00; packet[1] = 0x01; // Message Type: Binding Request
-    packet[2] = 0x00; packet[3] = 0x00; // Length: 0
-    packet[4] = 0x21; packet[5] = 0x12; packet[6] = 0xA4; packet[7] = 0x42; // Magic Cookie
-    // Transaction ID (random)
-    rand::thread_rng().fill_bytes(&mut packet[8..20]);
-
-    // Enviar a Google
-    if socket.send_to(&packet, STUN_SERVER).is_ok() {
-        let mut buf = [0u8; 1024];
-        // Esperamos respuesta brevemente
-        socket.set_read_timeout(Some(Duration::from_millis(500))).ok();
-        if let Ok((amt, _src)) = socket.recv_from(&mut buf) {
-            socket.set_read_timeout(None).ok(); // Quitar timeout
-            return parse_stun_response(&buf[..amt]);
-        }
-    }
-    socket.set_read_timeout(None).ok();
-    None
-}
-
-// --- COMANDOS EXISTENTES ---
+// --- 1. GENERAR LLAVES ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
     let mut secret_bytes = [0u8; 32];
@@ -95,6 +41,7 @@ fn generar_identidad() -> (String, String) {
     (general_purpose::STANDARD.encode(secret.to_bytes()), general_purpose::STANDARD.encode(public.to_bytes()))
 }
 
+// --- 2. CALCULAR SECRETO ---
 #[tauri::command]
 fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     let priv_bytes = general_purpose::STANDARD.decode(mi_privada).unwrap_or(vec![0; 32]);
@@ -106,6 +53,7 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 
+// --- UTILIDADES ---
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
 
 fn optimizar_windows(p: &str) { 
@@ -122,38 +70,7 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// --- COMANDO MODIFICADO: AGREGAR PEER + HOLE PUNCHING ---
-// Esta variable global guarda el socket de salida para poder hacer el punching
-static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
-
-#[tauri::command]
-fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
-    if let Ok(mut guard) = ROUTING_TABLE.lock() { 
-        if let Some(table) = guard.as_mut() { 
-            table.insert(ip_virtual, ip_destino.clone()); 
-            
-            // --- HOLE PUNCHING ---
-            // Lanzamos piedras (paquetes vacíos) a la IP del amigo para abrir nuestro NAT
-            if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
-                if let Some(socket) = socket_guard.as_ref() {
-                    let target = ip_destino.clone();
-                    let s_clone = socket.try_clone().unwrap();
-                    thread::spawn(move || {
-                        // Enviamos 5 puñetazos rápidos
-                        for _ in 0..5 {
-                            let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target);
-                            thread::sleep(Duration::from_millis(100));
-                        }
-                    });
-                }
-            }
-            return "OK".to_string(); 
-        } 
-    } 
-    "Error".to_string()
-}
-
-// ... (Resto de funciones auxiliares iguales: obtener_ruta_unica, iniciar_receptor_archivos) ...
+// --- ARCHIVOS ---
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
@@ -165,6 +82,7 @@ fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
         let new_path = parent.join(name); if !new_path.exists() { return new_path; } i += 1;
     }
 }
+
 fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         if let Ok(listener) = TcpListener::bind(format!("0.0.0.0:{}", FILE_PORT)) {
@@ -202,17 +120,13 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
     });
 }
 
-// --- ENGINE MODIFICADO PARA STUN ---
+// --- VPN ENGINE ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
         loop {
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
-                // Filtramos el mensaje de HOLE PUNCH para que no de error
-                if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG {
-                    continue; // Ignorar el puñetazo, ya cumplió su función de abrir NAT
-                }
-
+                if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
@@ -232,13 +146,15 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
     });
 }
 
-// ... (Resto de comandos) ...
 fn obtener_ip_local() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; 
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
 }
+
+// --- COMANDOS EXPORTADOS ---
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
+
 #[tauri::command]
 fn enviar_archivo(ip_destino: String) -> String {
     let file = rfd::FileDialog::new().set_title("Selecciona archivo").pick_file();
@@ -264,6 +180,7 @@ fn enviar_archivo(ip_destino: String) -> String {
         return "Enviando...".to_string();
     } "Cancelado".to_string()
 }
+
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
@@ -274,6 +191,26 @@ fn intentar_upnp(puerto_interno: u16) -> String {
         }, Err(_) => "Router no responde".to_string()
     }
 }
+
+#[tauri::command]
+fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
+    if let Ok(mut guard) = ROUTING_TABLE.lock() { 
+        if let Some(table) = guard.as_mut() { 
+            table.insert(ip_virtual, ip_destino.clone()); 
+            if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
+                if let Some(socket) = socket_guard.as_ref() {
+                    let target = ip_destino.clone();
+                    let s_clone = socket.try_clone().unwrap();
+                    thread::spawn(move || {
+                        for _ in 0..5 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(100)); }
+                    });
+                }
+            }
+            return "OK".to_string(); 
+        } 
+    } "Error".to_string()
+}
+
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32]; rand::thread_rng().fill_bytes(&mut key); general_purpose::STANDARD.encode(key)
@@ -292,21 +229,8 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     optimizar_windows(&puerto_local);
     iniciar_receptor_archivos(app_handle.clone());
     
-    // BIND SOCKET
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
-    
-    // --- STUN MAGIC: CONSULTAMOS IP PUBLICA REAL ---
-    if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) {
-        println!("🌍 STUN: Soy {}:{}", public_ip, public_port);
-        let _ = app_handle.emit("stun-result", (public_ip, public_port));
-    } else {
-        println!("⚠️ STUN falló, usando puerto local");
-    }
-
-    // GUARDAMOS EL SOCKET PARA PUNCHING
-    if let Ok(mut s) = GLOBAL_SOCKET.lock() {
-        *s = Some(socket_local.try_clone().unwrap());
-    }
+    if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
 
     let session_arc = Arc::new(session);
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
@@ -317,13 +241,30 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
+                    
+                    // --- AQUÍ ESTÁ LA MAGIA DEL SERVICE DISCOVERY ---
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
+                        
+                        // 1. Detectar si es Broadcast (255)
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
+                        
+                        // 2. Detectar si es Multicast (224.0.0.0 - 239.255.255.255)
+                        // El primer byte de Multicast está entre 224 y 239
+                        let first_byte = bytes[16];
+                        let is_multicast = first_byte >= 224 && first_byte <= 239;
+
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
-                                if is_broadcast { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } 
-                                else { if let Some(t) = table.get(&dest_ip) { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } else { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } }
+                                if is_broadcast || is_multicast { 
+                                    // ¡REPETIDOR ACTIVADO!
+                                    // Si alguien grita, se lo enviamos a TODOS los amigos conectados.
+                                    for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
+                                } else { 
+                                    // Tráfico Normal (Unicast)
+                                    if let Some(t) = table.get(&dest_ip) { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
+                                    else { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } 
+                                }
                                 if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
                         }
@@ -339,14 +280,25 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN E2EE + STUN ACTIVA".to_string()
+    "VPN COMPLETA ACTIVA".to_string()
 }
+
+// --- SYSTEM TRAY ---
+use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, intentar_upnp, enviar_archivo, generar_clave_segura, obtener_ip_local_cmd])
+        .setup(|app| {
+            let quit_i = MenuItem::with_id(app, "quit", "Salir de Mimic Hub", true, None::<&str>)?;
+            let show_i = MenuItem::with_id(app, "show", "Mostrar Ventana", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+            let _tray = TrayIconBuilder::with_id("tray").icon(app.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app, event| { match event.id.as_ref() { "quit" => app.exit(0), "show" => if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }, _ => {} } }).on_tray_icon_event(|tray, event| { if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event { let app = tray.app_handle(); if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } } }).build(app)?;
+            Ok(())
+        })
+        .on_window_event(|window, event| { if let WindowEvent::CloseRequested { api, .. } = event { window.hide().unwrap(); api.prevent_close(); } })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
