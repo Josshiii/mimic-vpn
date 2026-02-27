@@ -82,7 +82,7 @@
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myPublicIp = ""; // IP Publica se gestiona en servidor, aqui solo local
+        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null;
 
         // --- UTILS ---
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
@@ -102,8 +102,16 @@
         window.handleChat=(e)=>{if(e.key==='Enter'){const i=document.getElementById('chat-input');const t=i.value.trim();if(t){ws.send(JSON.stringify({type:'CHAT',sender:savedName,text:t}));i.value="";}}};
         function addChatMessage(s,t,sys=false){const b=document.getElementById('chat-box');const d=document.createElement('div');d.className="msg";if(sys)d.innerHTML=`<div class="sys-msg">${t}</div>`;else d.innerHTML=`<span class="msg-sender">${s}:</span><span class="msg-text">${t}</span>`;b.appendChild(d);b.scrollTop=b.scrollHeight;}
         
-        // --- LOGICA HÍBRIDA ---
+        // --- LOGICA HÍBRIDA + STUN ---
         async function getMyLocalIp() { try { myLocalIp = await invoke("obtener_ip_local_cmd"); console.log("Mi Local IP:", myLocalIp); } catch(e){} }
+
+        // Listener STUN (Nuevo)
+        listen('stun-result', (event) => {
+            const [ip, port] = event.payload;
+            console.log("STUN Detectado:", ip, port);
+            myStunPort = port; 
+            showToast(`NAT Abierta (Puerto ${port})`, "info");
+        });
 
         async function connectToBestRoute(msg) {
             // 1. Siempre intentamos conectar a la IP Pública (Plan A)
@@ -113,10 +121,10 @@
             
             // 2. Si el otro tiene IP Local válida y no es localhost
             if (msg.peer_local_ip && msg.peer_local_ip !== "127.0.0.1") {
-                // Intentamos agregar también la ruta local. Si estamos en la misma red, esta ganará por ser más rápida.
+                // Intentamos agregar también la ruta local.
                 await invoke("agregar_peer", { ipDestino: msg.peer_local_ip + ":" + msg.peer_port, ipVirtual: msg.peer_virtual_ip });
                 
-                // Heurística simple para UI: Si la IP Local del otro está en mi mismo rango (ej 192.168.1.x), probablemente es LAN.
+                // Heurística simple para UI
                 if (myLocalIp.split('.')[0] === msg.peer_local_ip.split('.')[0] && myLocalIp.split('.')[1] === msg.peer_local_ip.split('.')[1]) {
                      routeType = "LAN 🏠";
                 }
@@ -138,6 +146,7 @@
                 const turbo = document.getElementById('turbo-icon'); turbo.style.display="inline"; turbo.style.color="#a4d007"; turbo.style.textShadow="0 0 5px #a4d007";
                 document.getElementById('log-text').textContent = `Seguro (${myAutoIp})`; document.getElementById('log-text').style.color="#a4d007";
                 checkNat();
+                showToast("💡 Consejo: Puedes cerrar la ventana, la VPN seguirá activa.", "info");
             } catch(e) { console.error(e); }
         }
         async function checkNat() {
@@ -155,8 +164,8 @@
         let lastPing = Date.now();
         listen('evento-ping', ()=>{
             let now = Date.now();
-            let ms = now - lastPing; // Tiempo entre pings
-            document.getElementById('ping-display').textContent = "< 5 ms"; // Estimado visual
+            let ms = now - lastPing; 
+            document.getElementById('ping-display').textContent = "< 5 ms"; 
             lastPing = now;
             document.getElementById('ping-dot').style.background="#a4d007"; document.getElementById('ping-dot').style.boxShadow="0 0 8px #a4d007";
             setTimeout(()=>document.getElementById('ping-dot').style.boxShadow="none",200);
@@ -170,7 +179,7 @@
             document.getElementById('server-status').textContent="Conectando..."; ws=new WebSocket(SERVER_URL);
             ws.onopen=async ()=>{
                 document.getElementById('server-status').textContent="EN LÍNEA";document.getElementById('server-status').style.color="#a4d007";
-                await getMyLocalIp(); // Obtener IP LAN antes de login
+                await getMyLocalIp(); 
                 sendLogin();
             };
             ws.onmessage=async(e)=>{
@@ -180,10 +189,7 @@
                 if(msg.type==='MATCH'){
                     const sharedSecret = await invoke("calcular_secreto", { miPrivada: myPrivateKey, suPublica: msg.peer_public_key });
                     await startVpnEngine(sharedSecret);
-                    
-                    // CONEXIÓN HÍBRIDA
                     await connectToBestRoute(msg);
-                    
                     enableChat(); playSound('join'); showToast("Túnel Seguro Activo","info");
                 }
                 if(msg.type==='CHAT_MSG'){addChatMessage(msg.sender,msg.text);if(document.hidden)playSound('msg');}
@@ -195,13 +201,16 @@
         document.getElementById('btn-host').addEventListener('click',async()=>{
             const code=Math.random().toString(36).substring(7); const pwd=document.getElementById('host-password').value.trim();
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
-            ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:document.getElementById('puerto-local').value,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
+            // USAR PUERTO STUN SI EXISTE
+            const realPort = myStunPort || document.getElementById('puerto-local').value;
+            ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:realPort,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; document.getElementById('host-password').disabled=true; enableChat();
         });
         window.join=async(code,hasPwd)=>{
             let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:");if(pwd===null)return;}
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
-            ws.send(JSON.stringify({type:'JOIN',room:code,payload:document.getElementById('puerto-local').value,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
+            const realPort = myStunPort || document.getElementById('puerto-local').value;
+            ws.send(JSON.stringify({type:'JOIN',room:code,payload:realPort,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
         };
 
         function enableChat(){document.getElementById('chat-input').disabled=false;document.getElementById('chat-status').style.color="#a4d007";document.getElementById('chat-box').innerHTML="";addChatMessage("","Red Híbrida Lista",true);}
