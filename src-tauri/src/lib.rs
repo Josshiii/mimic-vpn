@@ -1,4 +1,4 @@
-use std::net::UdpSocket;
+use std::net::{UdpSocket, SocketAddr, SocketAddrV4, Ipv4Addr}; // <--- IMPORTANTE: Tipos de red añadidos
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,16 +7,15 @@ use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
 
-// SEGURIDAD + COMPRESIÓN
+// UPnP
+use igd_next::search_gateway;
+use igd_next::PortMappingProtocol;
+
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
 use rand::RngCore; 
 use base64::{Engine as _, engine::general_purpose}; 
 use lz4_flex::{compress_prepend_size, decompress_size_prepended}; 
-
-// ROMPEHIELOS (UPnP)
-use igd_next::search_gateway;
-use igd_next::PortMappingProtocol;
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
@@ -37,10 +36,7 @@ fn optimizar_windows(puerto: &str) {
 
 // --- FUNCIÓN DE ENVÍO "TURBO" ---
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
-    // 1. COMPRESIÓN (LZ4)
     let compressed_data = compress_prepend_size(datos);
-
-    // 2. ENCRIPTACIÓN
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
@@ -52,31 +48,24 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// --- HILO DE ENTRADA (Internet -> PC) ---
+// --- HILO DE ENTRADA ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
         loop {
-            // 'size' es el tamaño comprimido que llega de internet
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]);
                     let ciphertext = &buffer[12..size];
 
-                    // 1. DESENCRIPTAR
                     if let Ok(decrypted_compressed) = cipher.decrypt(nonce, ciphertext) {
-                        
-                        // 2. DESCOMPRIMIR (LZ4)
                         if let Ok(original_data) = decompress_size_prepended(&decrypted_compressed) {
-                            
                             if original_data == HEARTBEAT_MSG {
                                 let _ = app_handle.emit("evento-ping", ());
                             } else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original_data.len() as u16) {
                                     packet.bytes_mut().copy_from_slice(&original_data);
                                     session.send_packet(packet);
-                                    
-                                    // TELEMETRÍA: [Bytes Internet, Bytes Reales]
                                     let _ = app_handle.emit("stats-entrada", (size, original_data.len()));
                                 }
                             }
@@ -88,9 +77,48 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
     });
 }
 
-// --- COMANDOS ---
+// --- COMANDOS EXPORTADOS ---
 
-// 1. INICIAR VPN (Switch + Turbo + Telemetría)
+// Truco para obtener la IP Local Real (192.168.x.x)
+fn obtener_ip_local() -> Option<Ipv4Addr> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?; // No enviamos nada, solo consultamos ruta
+    if let Ok(SocketAddr::V4(addr)) = socket.local_addr() {
+        return Some(*addr.ip());
+    }
+    None
+}
+
+#[tauri::command]
+fn intentar_upnp(puerto_interno: u16) -> String {
+    // 1. Obtener nuestra IP Local (Ej: 192.168.1.50)
+    let local_ip = match obtener_ip_local() {
+        Some(ip) => ip,
+        None => return "Error: No se pudo detectar IP Local".to_string(),
+    };
+
+    // 2. Buscar Router y Abrir Puerto
+    match search_gateway(Default::default()) {
+        Ok(gateway) => {
+            // Construimos la dirección local completa (IP + Puerto)
+            let local_socket = SocketAddrV4::new(local_ip, puerto_interno);
+
+            // Llamada corregida a add_port (5 argumentos)
+            match gateway.add_port(
+                PortMappingProtocol::UDP,
+                puerto_interno, // Puerto Externo
+                local_socket,   // Destino Local (IP + Puerto Interno)
+                0,              // Duración (0 = Infinito)
+                "MimicHub-UDP"  // Descripción
+            ) {
+                Ok(_) => format!("ÉXITO: UPnP abierto en {}:{}", local_ip, puerto_interno),
+                Err(e) => format!("FALLO UPnP: {}", e)
+            }
+        },
+        Err(e) => format!("FALLO: Router no responde ({})", e)
+    }
+}
+
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -143,9 +171,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                                         }
                                     }
                                 }
-                                if !table.is_empty() { 
-                                    let _ = app_out.emit("stats-salida", bytes.len()); 
-                                }
+                                if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
                         }
                     }
@@ -155,7 +181,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         }
     });
 
-    // Hilo Latido
     let socket_latido = socket_local;
     let cipher_latido = cipher.clone();
     thread::spawn(move || {
@@ -174,23 +199,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     format!("MODO TURBO (LZ4) ACTIVADO")
 }
 
-// 2. ROMPEHIELOS (UPnP)
-#[tauri::command]
-fn intentar_upnp(puerto_interno: u16) -> String {
-    match search_gateway(Default::default()) {
-        Ok(gateway) => {
-            let ip_local = match gateway.get_external_ip() {
-                Ok(ip) => ip,
-                Err(_) => return "Router detectado, IP externa oculta".to_string(),
-            };
-            let _ = gateway.add_port(PortMappingProtocol::UDP, puerto_interno, ip_local.into(), puerto_interno, 0, "MimicHub-UDP");
-            format!("ÉXITO: NAT Abierta en {}:{}", ip_local, puerto_interno)
-        },
-        Err(e) => format!("FALLO UPnP: {}", e)
-    }
-}
-
-// 3. AGREGAR PEER (Switch)
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() {
@@ -202,7 +210,6 @@ fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     "Error".to_string()
 }
 
-// 4. GENERAR CLAVE
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32];
