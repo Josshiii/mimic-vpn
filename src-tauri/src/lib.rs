@@ -10,8 +10,8 @@ use std::fs::File;
 use std::io::{Read, Write}; 
 use std::path::{Path, PathBuf};
 
-// SEGURIDAD AVANZADA (Imports corregidos para v2.0)
-use x25519_dalek::{EphemeralSecret, PublicKey, StaticSecret};
+// SEGURIDAD AVANZADA
+use x25519_dalek::{PublicKey, StaticSecret}; // Quitamos EphemeralSecret
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
 use rand::RngCore; 
@@ -29,20 +29,20 @@ const FILE_PORT: u16 = 4444;
 
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
-// --- 1. GENERAR LLAVES (DIFIE-HELLMAN) ---
+// --- 1. GENERAR LLAVES (CORREGIDO) ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
-    let secret = EphemeralSecret::random_from_rng(rand::thread_rng());
+    // 1. Generamos 32 bytes aleatorios
+    let mut secret_bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut secret_bytes);
+
+    // 2. Creamos la llave Estática directamente
+    let secret = StaticSecret::from(secret_bytes);
     let public = PublicKey::from(&secret);
     
-    // Serializamos. StaticSecret se usa para guardar la privada generada
-    let secret_static = StaticSecret::from(secret);
-    let secret_bytes = secret_static.to_bytes();
-    let public_bytes = public.to_bytes();
-    
     (
-        general_purpose::STANDARD.encode(secret_bytes), 
-        general_purpose::STANDARD.encode(public_bytes)
+        general_purpose::STANDARD.encode(secret.to_bytes()), // Privada
+        general_purpose::STANDARD.encode(public.to_bytes())  // Pública
     )
 }
 
@@ -77,7 +77,6 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// CORREGIDO: Eliminado 'mut' innecesario en el argumento
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
@@ -104,16 +103,11 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
                             let name_len = name_len_buf[0] as usize; let mut name_buf = vec![0u8; name_len];
                             if socket.read_exact(&mut name_buf).is_ok() {
                                 if let Ok(raw_filename) = String::from_utf8(name_buf) {
-                                    
-                                    // CORREGIDO: Uso de 'dirs' para descargas
                                     if let Some(mut download_path) = dirs::download_dir() {
-                                        // Limpieza del nombre de archivo
                                         let safe_name = Path::new(&raw_filename).file_name().unwrap_or_default();
                                         download_path.push(safe_name);
-                                        
                                         let final_path = obtener_ruta_unica(download_path);
                                         let display_name = final_path.file_name().unwrap().to_string_lossy().to_string();
-                                        
                                         if let Ok(mut file) = File::create(final_path) {
                                             let mut buffer = [0u8; 8192]; let mut received_bytes = 0;
                                             while let Ok(n) = socket.read(&mut buffer) {
