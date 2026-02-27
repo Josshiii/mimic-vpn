@@ -5,29 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mimic Hub</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: 'Inter', sans-serif; }
         body { background-color: #1b2838; color: #c6d4df; height: 100vh; width: 100vw; overflow: hidden; display: flex; }
 
+        /* SCROLLBAR MODERNO */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #121418; }
+        ::-webkit-scrollbar-thumb { background: #3d4450; border-radius: 3px; }
+
         /* --- IZQUIERDA: PERFIL --- */
-        .sidebar { width: 280px; background-color: #171a21; border-right: 1px solid #000; padding: 20px; display: flex; flex-direction: column; }
+        .sidebar { width: 260px; background-color: #171a21; border-right: 1px solid #000; padding: 20px; display: flex; flex-direction: column; }
         
         .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; }
         .my-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #66c0f4, #1b2838); border-radius: 50%; margin: 0 auto 10px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; border: 2px solid #66c0f4; }
         
         .my-id-box { background: #000; padding: 5px; font-family: monospace; font-size: 11px; color: #a4d007; border-radius: 4px; margin-top: 5px; cursor: pointer; }
-        .my-id-box:hover { background: #222; }
         .copy-tooltip { font-size: 9px; color: #666; margin-top: 2px; }
 
-        label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 5px; display: block; margin-top: 15px; }
+        label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 5px; display: block; margin-top: 10px; }
         input { width: 100%; background: #101216; border: 1px solid #3d4450; color: #fff; padding: 8px; border-radius: 4px; font-size: 13px; outline: none; }
         input:focus { border-color: #66c0f4; }
 
         .btn-host { margin-top: 20px; background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%); color: white; border: none; padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; }
-        .btn-host:hover { filter: brightness(1.1); }
-        .btn-host:disabled { filter: grayscale(1); }
+        .btn-host:disabled { filter: grayscale(1); cursor: default; }
 
         /* --- CENTRO: SALAS --- */
         .main-content { flex: 1; background: radial-gradient(circle at top, #2a475e 0%, #1b2838 70%); padding: 20px; display: flex; flex-direction: column; }
@@ -39,27 +41,33 @@
         .btn-join { background: #3d4450; color: #fff; border: none; padding: 5px 15px; font-size: 11px; font-weight: bold; border-radius: 2px; cursor: pointer; }
         .btn-join:hover { background: #a4d007; color: #000; }
 
-        /* --- DERECHA: AMIGOS --- */
-        .friends-panel { width: 240px; background: #171a21; border-left: 1px solid #000; padding: 15px; display: flex; flex-direction: column; }
+        /* --- DERECHA: AMIGOS & CHAT --- */
+        .right-panel { width: 260px; background: #171a21; border-left: 1px solid #000; display: flex; flex-direction: column; }
         
-        .add-friend-box { display: flex; gap: 5px; margin-bottom: 15px; }
-        .add-friend-box input { margin: 0; font-size: 11px; }
+        /* Sección Amigos (Arriba) */
+        .friends-section { flex: 1; padding: 15px; overflow-y: auto; border-bottom: 1px solid #000; max-height: 50%; }
+        .add-friend-box { display: flex; gap: 5px; margin-bottom: 10px; }
         .btn-add { background: #3d4450; border: 1px solid #555; color: white; width: 30px; cursor: pointer; border-radius: 4px; }
-        .btn-add:hover { background: #a4d007; color: black; border-color: #a4d007; }
 
-        .friends-list { flex: 1; overflow-y: auto; }
-        
-        .friend-item { display: flex; align-items: center; gap: 10px; padding: 8px 5px; border-bottom: 1px solid #222; }
-        .f-avatar { width: 32px; height: 32px; background: #333; border-radius: 4px; display: flex; justify-content: center; align-items: center; font-weight: bold; color: #888; border: 2px solid #444; position: relative; }
+        .friend-item { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #222; }
+        .f-avatar { width: 28px; height: 28px; background: #333; border-radius: 4px; display: flex; justify-content: center; align-items: center; font-size: 12px; font-weight: bold; color: #888; border: 2px solid #444; }
         .f-avatar.online { border-color: #66c0f4; color: white; background: #2a475e; }
         .f-avatar.playing { border-color: #a4d007; color: white; background: #2a475e; }
-        
-        .f-info { display: flex; flex-direction: column; }
-        .f-name { font-size: 13px; font-weight: bold; color: #888; }
+        .f-name { font-size: 12px; font-weight: bold; color: #888; }
         .f-name.online { color: #66c0f4; }
-        .f-status { font-size: 10px; color: #555; }
-        .f-status.online { color: #66c0f4; }
-        .f-status.playing { color: #a4d007; }
+
+        /* Sección Chat (Abajo) */
+        .chat-section { flex: 1; display: flex; flex-direction: column; background: #121418; }
+        .chat-header { padding: 10px; background: #1e2126; font-size: 11px; font-weight: bold; color: #888; border-bottom: 1px solid #000; display: flex; justify-content: space-between; }
+        
+        .chat-messages { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+        .msg { font-size: 12px; line-height: 1.4; word-wrap: break-word; }
+        .msg-sender { font-weight: bold; color: #66c0f4; font-size: 11px; margin-right: 5px; }
+        .msg-text { color: #ccc; }
+        .sys-msg { color: #a4d007; font-size: 11px; font-style: italic; text-align: center; margin: 5px 0; }
+
+        .chat-input-area { padding: 10px; background: #1e2126; border-top: 1px solid #000; }
+        #chat-input { margin: 0; background: #2f3640; border: none; padding: 10px; font-size: 12px; }
 
         /* ESTADO */
         .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; }
@@ -72,20 +80,13 @@
         <div class="profile-card">
             <div class="my-avatar" id="ui-avatar">?</div>
             <div style="font-size: 14px; font-weight: bold; color: white;" id="ui-name-display">Jugador</div>
-            
-            <div style="margin-top: 10px; font-size: 10px; color: #888;">TU CÓDIGO DE AMIGO:</div>
             <div class="my-id-box" id="my-id-display" onclick="copyId()">CARGANDO...</div>
             <div class="copy-tooltip">Clic para copiar</div>
         </div>
-
         <label>TU NOMBRE</label>
         <input id="my-name" placeholder="Tu Nickname">
-
         <label>JUEGO</label>
         <input id="my-game" value="Halo CE">
-        <label>VERSIÓN</label>
-        <input id="my-version" value="v1.0">
-
         <button id="btn-host" class="btn-host">CREAR SALA</button>
     </div>
 
@@ -94,275 +95,265 @@
             <span>SALAS PÚBLICAS</span>
             <span id="server-status" style="font-size:11px;">Conectando...</span>
         </div>
-        <div id="lobby-list" class="lobby-list">
-            </div>
+        <div id="lobby-list" class="lobby-list"></div>
     </div>
 
-    <div class="friends-panel">
-        <div class="section-title" style="font-size: 12px;">AMIGOS</div>
-        
-        <div class="add-friend-box">
-            <input id="friend-code-input" placeholder="Pegar ID de amigo...">
-            <button class="btn-add" onclick="addFriend()">+</button>
+    <div class="right-panel">
+        <div class="friends-section">
+            <div style="font-size: 11px; color: #666; font-weight: bold; margin-bottom: 10px;">AMIGOS</div>
+            <div class="add-friend-box">
+                <input id="friend-code-input" placeholder="ID Amigo..." style="margin:0; font-size:11px;">
+                <button class="btn-add" onclick="addFriend()">+</button>
+            </div>
+            <div id="friends-list"></div>
         </div>
 
-        <div id="friends-list" class="friends-list">
+        <div class="chat-section">
+            <div class="chat-header">
+                <span>CHAT DE SALA</span>
+                <span id="chat-status" style="color: #555;">●</span>
             </div>
+            <div class="chat-messages" id="chat-box">
+                <div style="text-align:center; color:#444; font-size:11px; margin-top:20px;">
+                    Únete a una sala para chatear
+                </div>
+            </div>
+            <div class="chat-input-area">
+                <input id="chat-input" placeholder="Escribe un mensaje..." disabled onkeypress="handleChat(event)">
+            </div>
+        </div>
     </div>
 
     <div class="hidden">
-        <input id="ip-virtual" value="10.10.10.2">
+        <input id="ip-virtual" value="">
         <input id="puerto-local" value="5000">
+        <input id="my-version" value="v1.0">
     </div>
 
-<div class="status-bar">
+    <div class="status-bar">
         <div style="display:flex; gap:10px; align-items:center;">
             <div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
-            <span id="log-text">Sistema Listo</span>
+            <span id="log-text">Listo</span>
         </div>
-        
-        <div style="display:flex; gap:15px; align-items:center;">
-            <span id="ping-text" style="font-family:monospace;">-- ms</span>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <span id="ping-text" style="font-family:monospace;">--</span>
             <div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div>
         </div>
     </div>
 
     <script type="module">
-const invoke = window.__TAURI__.core.invoke;
-    const listen = window.__TAURI__.event.listen;
-    const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-    let ws;
+        const invoke = window.__TAURI__.core.invoke;
+        const listen = window.__TAURI__.event.listen;
+        const SERVER_URL = "wss://mimic-signal.onrender.com"; 
+        let ws;
 
-    // --- 1. SISTEMA DE IDENTIDAD (Auto-IP) ---
-    let myId = localStorage.getItem('mimic_id');
-    if (!myId) {
-        myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
-        localStorage.setItem('mimic_id', myId);
-    }
-    document.getElementById('my-id-display').textContent = myId;
-
-    // ALGORITMO: Generar IP única basada en el ID
-    // Convierte "M-X7Z9" -> un número entre 2 y 254 -> "10.10.10.XXX"
-    function generateIpFromId(id) {
-        let hash = 0;
-        for (let i = 0; i < id.length; i++) {
-            hash = id.charCodeAt(i) + ((hash << 5) - hash);
+        // --- SISTEMA ID & IP ---
+        let myId = localStorage.getItem('mimic_id');
+        if (!myId) {
+            myId = 'M-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+            localStorage.setItem('mimic_id', myId);
         }
-        // Aseguramos rango 2-254 (El .1 es el Gateway, el .255 es Broadcast)
-        const lastOctet = (Math.abs(hash) % 253) + 2; 
-        return `10.10.10.${lastOctet}`;
-    }
+        document.getElementById('my-id-display').textContent = myId;
 
-    // Auto-Asignar IP y guardarla en el input oculto
-    const myAutoIp = generateIpFromId(myId);
-    document.getElementById('ip-virtual').value = myAutoIp;
-    console.log(`Tu IP Asignada Automáticamente es: ${myAutoIp}`);
+        function generateIpFromId(id) {
+            let hash = 0;
+            for (let i = 0; i < id.length; i++) hash = id.charCodeAt(i) + ((hash << 5) - hash);
+            return `10.10.10.${(Math.abs(hash) % 253) + 2}`;
+        }
+        const myAutoIp = generateIpFromId(myId);
+        document.getElementById('ip-virtual').value = myAutoIp;
 
-    // --- CARGAR DATOS GUARDADOS ---
-    let savedName = localStorage.getItem('mimic_name') || "Jugador";
-    document.getElementById('my-name').value = savedName;
-    document.getElementById('ui-name-display').textContent = savedName;
-    document.getElementById('ui-avatar').textContent = savedName.charAt(0).toUpperCase();
+        // --- PERFIL ---
+        let savedName = localStorage.getItem('mimic_name') || "Jugador";
+        document.getElementById('my-name').value = savedName;
+        updateProfileUI(savedName);
 
-    let friends = JSON.parse(localStorage.getItem('mimic_friends')) || [];
+        document.getElementById('my-name').addEventListener('input', (e) => {
+            localStorage.setItem('mimic_name', e.target.value);
+            updateProfileUI(e.target.value);
+            if(ws && ws.readyState === 1) sendLogin(); 
+        });
 
-    document.getElementById('my-name').addEventListener('input', (e) => {
-        localStorage.setItem('mimic_name', e.target.value);
-        document.getElementById('ui-name-display').textContent = e.target.value;
-        document.getElementById('ui-avatar').textContent = e.target.value.charAt(0).toUpperCase();
-        if(ws && ws.readyState === 1) sendLogin(); 
-    });
+        function updateProfileUI(name) {
+            document.getElementById('ui-name-display').textContent = name;
+            document.getElementById('ui-avatar').textContent = name.charAt(0).toUpperCase();
+        }
 
-    window.copyId = () => {
-        navigator.clipboard.writeText(myId);
-        document.getElementById('log-text').textContent = "ID copiado";
-    };
-
-    window.addFriend = () => {
-        const input = document.getElementById('friend-code-input');
-        const code = input.value.trim().toUpperCase();
-        if (!code) return;
-        if (code === myId) { alert("No puedes agregarte a ti mismo"); return; }
-        if (friends.some(f => f.id === code)) { alert("Ya es tu amigo"); return; }
-        friends.push({ id: code, name: "Amigo (" + code + ")" });
-        localStorage.setItem('mimic_friends', JSON.stringify(friends));
-        input.value = "";
-        renderFriends([]); 
-        alert("Amigo agregado.");
-    };
-
-    // --- RED ---
-    function connect() {
-        document.getElementById('server-status').textContent = "Conectando...";
-        ws = new WebSocket(SERVER_URL);
-
-        ws.onopen = () => {
-            document.getElementById('server-status').textContent = "EN LÍNEA";
-            document.getElementById('server-status').style.color = "#a4d007";
-            sendLogin();
+        // --- AMIGOS ---
+        let friends = JSON.parse(localStorage.getItem('mimic_friends')) || [];
+        window.addFriend = () => {
+            const code = document.getElementById('friend-code-input').value.trim().toUpperCase();
+            if (!code || code === myId || friends.some(f => f.id === code)) return;
+            friends.push({ id: code, name: `Amigo ${code}` });
+            localStorage.setItem('mimic_friends', JSON.stringify(friends));
+            renderFriends([]);
+            document.getElementById('friend-code-input').value = "";
         };
+        window.copyId = () => navigator.clipboard.writeText(myId);
 
-        ws.onmessage = (e) => {
-            const msg = JSON.parse(e.data);
-            
-            if (msg.type === 'STATE_UPDATE') {
-                renderLobbies(msg.lobbies);
-                renderFriends(msg.players);
-            }
-            
-            if (msg.type === 'MATCH') {
-                startTunnel(msg.peer_ip, msg.peer_port, msg.role, msg.key);
+        // --- CHAT SYSTEM ---
+        window.handleChat = (e) => {
+            if (e.key === 'Enter') {
+                const input = document.getElementById('chat-input');
+                const text = input.value.trim();
+                if (text) {
+                    ws.send(JSON.stringify({ type: 'CHAT', sender: savedName, text: text }));
+                    input.value = "";
+                }
             }
         };
 
-        ws.onclose = () => setTimeout(connect, 3000);
-    }
-
-    function sendLogin() {
-        const name = document.getElementById('my-name').value;
-        ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: name }));
-    }
-
-    // --- RENDERIZADO ---
-    function renderFriends(onlinePlayers) {
-        const listEl = document.getElementById('friends-list');
-        listEl.innerHTML = "";
-        if (friends.length === 0) {
-            listEl.innerHTML = "<div style='color:#555; font-size:10px; text-align:center; margin-top:20px;'>Agrega amigos con su ID</div>";
-            return;
-        }
-        friends.forEach(friend => {
-            const onlineData = onlinePlayers.find(p => p.id === friend.id);
-            let statusClass = "";
-            let statusText = "Offline";
-            if (onlineData) {
-                friend.name = onlineData.name;
-                statusClass = onlineData.status === "Jugando" ? "playing" : "online";
-                statusText = onlineData.status === "Jugando" ? onlineData.game : "En Línea";
+        function addChatMessage(sender, text, isSystem = false) {
+            const box = document.getElementById('chat-box');
+            const div = document.createElement('div');
+            div.className = "msg";
+            if (isSystem) {
+                div.innerHTML = `<div class="sys-msg">${text}</div>`;
+            } else {
+                div.innerHTML = `<span class="msg-sender">${sender}:</span><span class="msg-text">${text}</span>`;
             }
-            const html = `
-                <div class="friend-item">
-                    <div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div>
-                    <div class="f-info">
-                        <span class="f-name ${statusClass}">${friend.name}</span>
-                        <span class="f-status ${statusClass}">${statusText}</span>
-                    </div>
-                </div>
-            `;
-            listEl.innerHTML += html;
-        });
-        localStorage.setItem('mimic_friends', JSON.stringify(friends));
-    }
-
-    function renderLobbies(lobbies) {
-        const list = document.getElementById('lobby-list');
-        list.innerHTML = "";
-        const codes = Object.keys(lobbies);
-        if(codes.length === 0) {
-            list.innerHTML = "<div style='text-align:center; color:#555; margin-top:40px;'>No hay salas públicas</div>";
-            return;
+            box.appendChild(div);
+            box.scrollTop = box.scrollHeight;
         }
-        codes.forEach(code => {
-            const l = lobbies[code];
-            const html = `
-                <div class="lobby-card">
-                    <div>
-                        <div style="font-weight:bold; color:#fff;">${l.gameName}</div>
-                        <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
-                    </div>
-                    <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
-                </div>
-            `;
-            list.innerHTML += html;
-        });
-    }
 
-    // --- ACCIONES ---
-    
-    document.getElementById('btn-host').addEventListener('click', async () => {
-        const code = Math.random().toString(36).substring(7);
-        const name = document.getElementById('my-name').value;
-        const game = document.getElementById('my-game').value;
-        const ver = document.getElementById('my-version').value;
-        const port = document.getElementById('puerto-local').value;
+        // --- RED ---
+        function connect() {
+            document.getElementById('server-status').textContent = "Conectando...";
+            ws = new WebSocket(SERVER_URL);
 
-        // 1. Clave Segura
-        const secureKey = await invoke("generar_clave_segura");
-        window.currentKey = secureKey;
+            ws.onopen = () => {
+                document.getElementById('server-status').textContent = "EN LÍNEA";
+                document.getElementById('server-status').style.color = "#a4d007";
+                sendLogin();
+            };
 
-        // 2. Enviar datos al server
-        ws.send(JSON.stringify({
-            type: 'HOST', room: code, hostName: name, gameName: game, gameVer: ver, payload: port, key: secureKey
-        }));
-        
-        document.getElementById('log-text').textContent = "Sala Segura Creada.";
-        document.getElementById('btn-host').disabled = true;
-    });
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                
+                if (msg.type === 'STATE_UPDATE') {
+                    renderLobbies(msg.lobbies);
+                    renderFriends(msg.players);
+                }
+                
+                if (msg.type === 'MATCH') {
+                    startTunnel(msg.peer_ip, msg.peer_port, msg.role, msg.key);
+                    enableChat();
+                }
 
-    window.join = (code) => {
-        const port = document.getElementById('puerto-local').value;
-        ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: port }));
-    };
+                if (msg.type === 'CHAT_MSG') {
+                    addChatMessage(msg.sender, msg.text);
+                }
+            };
 
-    async function startTunnel(ip, port, role, receivedKey) {
-        document.getElementById('log-text').textContent = "Estableciendo Enlace Seguro...";
-        document.getElementById('log-text').style.color = "#a4d007";
-        
-        const keyToUse = role === 'HOST' ? window.currentKey : receivedKey;
-        const myAutoIp = document.getElementById('ip-virtual').value; // Usamos la IP Auto-generada
+            ws.onclose = () => setTimeout(connect, 3000);
+        }
 
-        try {
-            await invoke("conectar_tunel", { 
-                ipDestino: ip + ":" + port, 
-                puertoLocal: document.getElementById('puerto-local').value,
-                ipVirtual: myAutoIp, // <--- IP CALCULADA AUTOMÁTICAMENTE
-                claveB64: keyToUse 
+        function sendLogin() {
+            ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: document.getElementById('my-name').value }));
+        }
+
+        function enableChat() {
+            document.getElementById('chat-input').disabled = false;
+            document.getElementById('chat-status').style.color = "#a4d007";
+            document.getElementById('chat-box').innerHTML = ""; // Limpiar
+            addChatMessage("", "¡Conectado a la Sala! Di hola.", true);
+        }
+
+        // --- RENDERIZADO ---
+        function renderFriends(onlinePlayers) {
+            const listEl = document.getElementById('friends-list');
+            listEl.innerHTML = "";
+            friends.forEach(friend => {
+                const onlineData = onlinePlayers.find(p => p.id === friend.id);
+                let statusClass = onlineData ? (onlineData.status === "Jugando" ? "playing" : "online") : "";
+                if(onlineData) friend.name = onlineData.name;
+                
+                listEl.innerHTML += `
+                    <div class="friend-item">
+                        <div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div>
+                        <div class="f-name ${statusClass}">${friend.name}</div>
+                    </div>`;
             });
-            document.getElementById('log-text').textContent = `🔒 CONEXIÓN SEGURA (Tu IP: ${myAutoIp})`;
-        } catch (e) { console.error(e); }
-    }
+            localStorage.setItem('mimic_friends', JSON.stringify(friends));
+        }
 
-    connect();
-    listen('trafico-entrada', () => {
-        const led = document.getElementById('traffic-led');
-        led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
-    });
+        function renderLobbies(lobbies) {
+            const list = document.getElementById('lobby-list');
+            list.innerHTML = "";
+            Object.keys(lobbies).forEach(code => {
+                const l = lobbies[code];
+                list.innerHTML += `
+                    <div class="lobby-card">
+                        <div>
+                            <div style="font-weight:bold; color:#fff;">${l.gameName}</div>
+                            <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
+                        </div>
+                        <button class="btn-join" onclick="window.join('${code}')">UNIRSE</button>
+                    </div>`;
+            });
+            if (!list.innerHTML) list.innerHTML = "<div style='text-align:center;color:#444;margin-top:20px'>No hay salas</div>";
+        }
 
-        // --- SISTEMA DE PING Y MONITOREO ---
-    let lastPingTime = Date.now();
-    let pingInterval;
+        // --- ACCIONES ---
+        document.getElementById('btn-host').addEventListener('click', async () => {
+            const code = Math.random().toString(36).substring(7);
+            const secureKey = await invoke("generar_clave_segura");
+            window.currentKey = secureKey;
+            
+            ws.send(JSON.stringify({
+                type: 'HOST', room: code, hostName: document.getElementById('my-name').value,
+                gameName: document.getElementById('my-game').value, gameVer: "v1.0", 
+                payload: document.getElementById('puerto-local').value, key: secureKey
+            }));
+            
+            document.getElementById('log-text').textContent = "Sala Creada";
+            document.getElementById('btn-host').disabled = true;
+            enableChat(); // Habilitar chat para el host
+        });
 
-    // Escuchar el latido que viene de Rust
-    listen('evento-ping', () => {
-        const now = Date.now();
-        // Calculamos un "Ping Simulado" basado en la frecuencia de llegada
-        // (Para ping real exacto se necesita protocolo de ida y vuelta, esto es una aprox visual)
-        const diff = now - lastPingTime;
-        lastPingTime = now;
+        window.join = (code) => {
+            ws.send(JSON.stringify({ type: 'JOIN', room: code, payload: document.getElementById('puerto-local').value }));
+        };
 
-        // Actualizar UI
-        const pingDisplay = Math.min(Math.max(diff - 2000, 1), 999); // Ajuste visual
-        // Nota: Como mandamos cada 2000ms, la diferencia real de red es pequeña.
-        // Para simplificar: Si llega el evento, estamos conectados.
-        
-        document.getElementById('ping-dot').style.background = "#a4d007"; // Verde
-        document.getElementById('ping-dot').style.boxShadow = "0 0 8px #a4d007";
-        document.getElementById('ping-text').textContent = "CONECTADO";
-        document.getElementById('ping-text').style.color = "#a4d007";
+        async function startTunnel(ip, port, role, receivedKey) {
+            document.getElementById('log-text').textContent = "Conectando...";
+            const keyToUse = role === 'HOST' ? window.currentKey : receivedKey;
+            try {
+                await invoke("conectar_tunel", { 
+                    ipDestino: ip + ":" + port, 
+                    puertoLocal: document.getElementById('puerto-local').value,
+                    ipVirtual: myAutoIp, 
+                    claveB64: keyToUse 
+                });
+                document.getElementById('log-text').textContent = `Conectado (${myAutoIp})`;
+                document.getElementById('log-text').style.color = "#a4d007";
+            } catch (e) { console.error(e); }
+        }
 
-        // Efecto de parpadeo
-        setTimeout(() => {
-            document.getElementById('ping-dot').style.boxShadow = "none";
-        }, 200);
-        
-        // Reiniciar temporizador de "Muerte"
-        clearTimeout(pingInterval);
-        pingInterval = setTimeout(() => {
-            document.getElementById('ping-dot').style.background = "#ef4444"; // Rojo
-            document.getElementById('ping-text').textContent = "SIN SEÑAL";
-            document.getElementById('ping-text').style.color = "#ef4444";
-        }, 5000); // Si no llega nada en 5 segundos, declaramos muerte
-    });
+        // --- PING SYSTEM ---
+        let lastPingTime = Date.now();
+        let pingInterval;
+        listen('evento-ping', () => {
+            lastPingTime = Date.now();
+            document.getElementById('ping-dot').style.background = "#a4d007";
+            document.getElementById('ping-dot').style.boxShadow = "0 0 8px #a4d007";
+            document.getElementById('ping-text').textContent = "ONLINE";
+            document.getElementById('ping-text').style.color = "#a4d007";
+            setTimeout(() => document.getElementById('ping-dot').style.boxShadow = "none", 200);
+            
+            clearTimeout(pingInterval);
+            pingInterval = setTimeout(() => {
+                document.getElementById('ping-dot').style.background = "#ef4444";
+                document.getElementById('ping-text').textContent = "LOST";
+                document.getElementById('ping-text').style.color = "#ef4444";
+            }, 5000);
+        });
+
+        connect();
+        listen('trafico-entrada', () => {
+            const led = document.getElementById('traffic-led');
+            led.style.background = "#a4d007"; setTimeout(()=>led.style.background="#333", 50);
+        });
     </script>
 </body>
 </html>
