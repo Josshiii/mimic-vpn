@@ -19,7 +19,7 @@ serde_json = "1"
 # --- MOTOR DE RED (Driver VPN) ---
 wintun = "0.4"
 
-# --- SEGURIDAD (Criptografía de Grado Militar) ---
+# --- SEGURIDAD (Criptografía) ---
 chacha20poly1305 = "0.10"
 rand = "0.8"
 base64 = "0.21"
@@ -27,5 +27,9 @@ base64 = "0.21"
 # --- VELOCIDAD (Compresión LZ4) ---
 lz4_flex = "0.11"
 
-# --- CONECTIVIDAD (Apertura Automática de Puertos UPnP) ---
+# --- CONECTIVIDAD (Rompehielos UPnP) ---
 igd-next = "0.14"
+
+# --- MIMIC DROP (Archivos) ---
+rfd = "0.14"   # Selector de archivos nativo
+dirs = "5.0"   # Para encontrar la carpeta de Descargas
