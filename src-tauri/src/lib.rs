@@ -14,6 +14,10 @@ use rand::RngCore;
 use base64::{Engine as _, engine::general_purpose}; 
 use lz4_flex::{compress_prepend_size, decompress_size_prepended}; 
 
+// ROMPEHIELOS (UPnP)
+use igd_next::search_gateway;
+use igd_next::PortMappingProtocol;
+
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
@@ -72,8 +76,7 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
                                     packet.bytes_mut().copy_from_slice(&original_data);
                                     session.send_packet(packet);
                                     
-                                    // --- CORRECCIÓN AQUÍ PARA TELEMETRÍA ---
-                                    // Enviamos [Bytes Internet, Bytes Reales] para calcular el ahorro
+                                    // TELEMETRÍA: [Bytes Internet, Bytes Reales]
                                     let _ = app_handle.emit("stats-entrada", (size, original_data.len()));
                                 }
                             }
@@ -86,6 +89,8 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 }
 
 // --- COMANDOS ---
+
+// 1. INICIAR VPN (Switch + Turbo + Telemetría)
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -139,7 +144,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                                     }
                                 }
                                 if !table.is_empty() { 
-                                    // --- CORRECCIÓN TELEMETRÍA SALIDA ---
                                     let _ = app_out.emit("stats-salida", bytes.len()); 
                                 }
                             }
@@ -170,6 +174,23 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     format!("MODO TURBO (LZ4) ACTIVADO")
 }
 
+// 2. ROMPEHIELOS (UPnP)
+#[tauri::command]
+fn intentar_upnp(puerto_interno: u16) -> String {
+    match search_gateway(Default::default()) {
+        Ok(gateway) => {
+            let ip_local = match gateway.get_external_ip() {
+                Ok(ip) => ip,
+                Err(_) => return "Router detectado, IP externa oculta".to_string(),
+            };
+            let _ = gateway.add_port(PortMappingProtocol::UDP, puerto_interno, ip_local.into(), puerto_interno, 0, "MimicHub-UDP");
+            format!("ÉXITO: NAT Abierta en {}:{}", ip_local, puerto_interno)
+        },
+        Err(e) => format!("FALLO UPnP: {}", e)
+    }
+}
+
+// 3. AGREGAR PEER (Switch)
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() {
@@ -181,6 +202,7 @@ fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     "Error".to_string()
 }
 
+// 4. GENERAR CLAVE
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32];
@@ -192,7 +214,7 @@ fn generar_clave_segura() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_clave_segura])
+        .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_clave_segura, intentar_upnp])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
