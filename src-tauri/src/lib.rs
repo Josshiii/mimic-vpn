@@ -5,7 +5,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::Emitter;
 use std::os::windows::process::CommandExt;
-use std::collections::HashMap; // <--- Necesario para el Mapa de Rutas
+use std::collections::HashMap; 
 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -17,8 +17,7 @@ const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-// TABLA DE RUTAS: Mapea "10.10.10.45" -> "201.12.34.55:5000"
-// Ahora somos un Switch, no un Hub.
+// TABLA DE RUTAS
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 fn inicializar_tabla() {
@@ -72,7 +71,7 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
-    inicializar_tabla(); // Limpiar rutas
+    inicializar_tabla(); 
 
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave inválida".to_string() };
     if key_bytes.len() != 32 { return "Longitud incorrecta".to_string(); }
@@ -93,7 +92,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
 
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
     
-    // --- HILO DE SALIDA INTELIGENTE (SWITCH) ---
+    // --- HILO DE SALIDA (CORREGIDO) ---
     let socket_out = socket_local.try_clone().unwrap();
     let cipher_out = cipher.clone();
     let app_out = app_handle.clone();
@@ -104,31 +103,30 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
-                    if bytes.len() >= 20 { // Mínimo tamaño de cabecera IPv4
-                        // LEER LA IP DE DESTINO (Bytes 16, 17, 18, 19 del paquete IPv4)
-                        // Esto es lo que hace un Switch real: inspeccionar el paquete
+                    if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
 
-                        if let Ok(Some(table)) = ROUTING_TABLE.lock() {
-                            if is_broadcast {
-                                // MODO BROADCAST: Enviar a TODOS (Juegos LAN antiguos, descubrimiento)
-                                for target_real_ip in table.values() {
-                                    enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
-                                }
-                            } else {
-                                // MODO UNICAST: Enviar SOLO al destinatario (Optimización Brutal)
-                                if let Some(target_real_ip) = table.get(&dest_ip) {
-                                    enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
-                                } else {
-                                    // Si no conocemos la IP (raro), enviamos a todos por si acaso (Fallback)
-                                    // Esto asegura compatibilidad si el mapa falla
+                        // CORRECCIÓN AQUÍ: Obtenemos el guard primero
+                        if let Ok(guard) = ROUTING_TABLE.lock() {
+                            // Luego miramos dentro del guard
+                            if let Some(table) = guard.as_ref() {
+                                if is_broadcast {
                                     for target_real_ip in table.values() {
                                         enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
                                     }
+                                } else {
+                                    if let Some(target_real_ip) = table.get(&dest_ip) {
+                                        enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
+                                    } else {
+                                        // Fallback
+                                        for target_real_ip in table.values() {
+                                            enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
+                                        }
+                                    }
                                 }
+                                if !table.is_empty() { let _ = app_out.emit("trafico-salida", bytes.len()); }
                             }
-                            if !table.is_empty() { let _ = app_out.emit("trafico-salida", bytes.len()); }
                         }
                     }
                 },
@@ -137,15 +135,18 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         }
     });
 
-    // Hilo Latido
+    // --- HILO DE LATIDO (CORREGIDO) ---
     let socket_latido = socket_local;
     let cipher_latido = cipher.clone();
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
-            if let Ok(Some(table)) = ROUTING_TABLE.lock() {
-                for target_real_ip in table.values() {
-                    enviar_paquete_seguro(&socket_latido, target_real_ip, HEARTBEAT_MSG, &cipher_latido);
+            // CORRECCIÓN AQUÍ TAMBIÉN
+            if let Ok(guard) = ROUTING_TABLE.lock() {
+                if let Some(table) = guard.as_ref() {
+                    for target_real_ip in table.values() {
+                        enviar_paquete_seguro(&socket_latido, target_real_ip, HEARTBEAT_MSG, &cipher_latido);
+                    }
                 }
             }
         }
@@ -156,9 +157,8 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
 
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
-    if let Ok(mut lock) = ROUTING_TABLE.lock() {
-        if let Some(table) = lock.as_mut() {
-            // Guardamos: "10.10.10.X" -> "201.23.44.1:5000"
+    if let Ok(mut guard) = ROUTING_TABLE.lock() {
+        if let Some(table) = guard.as_mut() {
             table.insert(ip_virtual.clone(), ip_destino.clone());
             println!("RUTA AÑADIDA: {} -> {}", ip_virtual, ip_destino);
             return format!("OK");
