@@ -69,7 +69,7 @@
         .chat-input-area { padding: 10px; background: #1e2126; border-top: 1px solid #000; }
         #chat-input { margin: 0; background: #2f3640; border: none; padding: 10px; font-size: 12px; }
 
-        /* --- NUEVO CSS: PANEL TELEMETRÍA --- */
+        /* --- CSS PANEL TELEMETRÍA --- */
         .telemetry-panel {
             background: #0b0d10;
             border-top: 1px solid #333;
@@ -109,6 +109,10 @@
         <input id="my-name" placeholder="Tu Nickname">
         <label>JUEGO</label>
         <input id="my-game" value="Halo CE">
+        
+        <label>CONTRASEÑA SALA (Opcional)</label>
+        <input id="host-password" placeholder="Dejar vacío para Pública" type="password" style="border-color: #a4d007;">
+        
         <button id="btn-host" class="btn-host">CREAR SALA</button>
     </div>
 
@@ -283,7 +287,6 @@
             } catch(e) { console.error("Error motor:", e); }
         }
 
-        // AÑADIR PEER CON RUTA
         async function addPeer(realIp, port, virtualIp) {
             try {
                 const address = realIp + ":" + port;
@@ -300,7 +303,6 @@
         let bytesIn_Game = 0;  // Lo que entregamos al juego (Descomprimido)
         let lastCheck = Date.now();
 
-        // Escuchar datos de entrada (Bajada)
         listen('stats-entrada', (event) => {
             const [netSize, gameSize] = event.payload;
             bytesIn_Net += netSize;
@@ -308,30 +310,25 @@
             animateLed(); 
         });
 
-        // Escuchar datos de salida (Subida)
         listen('stats-salida', (event) => {
             animateLed();
         });
 
-        // Bucle de actualización (cada 1 segundo)
         setInterval(() => {
             const now = Date.now();
-            const duration = (now - lastCheck) / 1000; // Segundos pasados
+            const duration = (now - lastCheck) / 1000; 
             lastCheck = now;
 
             if (bytesIn_Game > 0) {
-                // 1. Calcular Velocidad (KB/s del juego real)
                 const speed = (bytesIn_Game / 1024) / duration;
                 document.getElementById('speed-display').textContent = speed.toFixed(1) + " KB/s";
-
-                // 2. Calcular Ahorro Turbo (Eficiencia)
+                
                 const savings = 100 - ((bytesIn_Net / bytesIn_Game) * 100);
                 const displaySavings = savings > 0 && savings < 100 ? savings.toFixed(0) : "0";
                 
                 document.getElementById('turbo-display').textContent = displaySavings + "%";
                 document.getElementById('turbo-display').style.color = "#a4d007";
                 
-                // Resetear contadores
                 bytesIn_Net = 0;
                 bytesIn_Game = 0;
             } else {
@@ -351,7 +348,7 @@
             }, 50);
         }
 
-        // --- WEBSOCKET ---
+        // --- WEBSOCKET Y LOGICA DE CONTRASEÑA ---
         function connect() {
             document.getElementById('server-status').textContent = "Conectando...";
             ws = new WebSocket(SERVER_URL);
@@ -362,8 +359,16 @@
             };
             ws.onmessage = async (e) => {
                 const msg = JSON.parse(e.data);
+                
                 if (msg.type === 'STATE_UPDATE') { renderLobbies(msg.lobbies); renderFriends(msg.players); }
                 
+                // NUEVO: ERROR SI LA CONTRASEÑA ESTA MAL
+                if (msg.type === 'ERROR') {
+                    alert(msg.message); 
+                    document.getElementById('log-text').textContent = "Error Login";
+                    document.getElementById('log-text').style.color = "#ef4444";
+                }
+
                 if (msg.type === 'MATCH') {
                     const key = msg.role === 'HOST' ? window.currentKey : msg.key;
                     await startVpnEngine(key);
@@ -387,28 +392,41 @@
             const code = Math.random().toString(36).substring(7);
             const secureKey = await invoke("generar_clave_segura");
             window.currentKey = secureKey; 
+            
+            // NUEVO: LEEMOS CONTRASEÑA
+            const password = document.getElementById('host-password').value.trim();
+
             await startVpnEngine(secureKey);
             
-            // HOST ENVÍA SU IP VIRTUAL AHORA
             ws.send(JSON.stringify({
                 type: 'HOST', room: code, hostName: document.getElementById('my-name').value,
                 gameName: document.getElementById('my-game').value, gameVer: "v1.0", 
                 payload: document.getElementById('puerto-local').value, 
                 virtualIp: myAutoIp, 
-                key: secureKey
+                key: secureKey,
+                password: password // ENVIAMOS CLAVE
             }));
             
-            document.getElementById('log-text').textContent = "Sala Lista";
+            document.getElementById('log-text').textContent = password ? "Sala Privada Lista 🔒" : "Sala Pública Lista";
             document.getElementById('btn-host').disabled = true;
+            document.getElementById('host-password').disabled = true; // Bloquear input
             enableChat();
         });
 
-        window.join = (code) => {
-            // CLIENTE ENVÍA SU IP VIRTUAL AL UNIRSE
+        window.join = (code, hasPassword) => {
+            let password = "";
+            
+            // NUEVO: SI TIENE CANDADO, PREGUNTAMOS
+            if (hasPassword) {
+                password = prompt("🔒 Esta sala es privada. Ingresa la contraseña:");
+                if (password === null) return; // Cancelado
+            }
+
             ws.send(JSON.stringify({ 
                 type: 'JOIN', room: code, 
                 payload: document.getElementById('puerto-local').value,
-                virtualIp: myAutoIp 
+                virtualIp: myAutoIp,
+                password: password // ENVIAMOS CLAVE
             }));
         };
 
@@ -432,7 +450,18 @@
             const list = document.getElementById('lobby-list'); list.innerHTML = "";
             Object.keys(lobbies).forEach(code => {
                 const l = lobbies[code];
-                list.innerHTML += `<div class="lobby-card"><div><div style="font-weight:bold; color:#fff;">${l.gameName}</div><div style="font-size:11px; color:#888;">Host: ${l.hostName}</div></div><button class="btn-join" onclick="window.join('${code}')">UNIRSE</button></div>`;
+                // NUEVO: MOSTRAR CANDADO
+                const lockIcon = l.hasPassword ? "🔒" : "";
+                const joinText = l.hasPassword ? "ENTRAR" : "UNIRSE";
+                
+                list.innerHTML += `
+                    <div class="lobby-card">
+                        <div>
+                            <div style="font-weight:bold; color:#fff;">${lockIcon} ${l.gameName}</div>
+                            <div style="font-size:11px; color:#888;">Host: ${l.hostName}</div>
+                        </div>
+                        <button class="btn-join" onclick="window.join('${code}', ${l.hasPassword})">${joinText}</button>
+                    </div>`;
             });
             if (!list.innerHTML) list.innerHTML = "<div style='text-align:center;color:#444;margin-top:20px'>No hay salas</div>";
         }
