@@ -6,9 +6,9 @@ use std::time::Duration;
 use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
-use std::fs::File; // Para leer archivos
-use std::io::{Read, Write}; // Para enviar bytes
-use std::path::PathBuf;
+use std::fs::File; 
+use std::io::{Read, Write}; 
+use std::path::{Path, PathBuf}; // Para manejo seguro de rutas
 
 // UPnP & Utils
 use igd_next::search_gateway;
@@ -23,7 +23,10 @@ const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-const FILE_PORT: u16 = 4444; // Puerto para archivos
+const FILE_PORT: u16 = 4444; 
+
+// SEGURIDAD: Cabecera mágica para evitar conexiones extrañas
+const MAGIC_HEADER: &[u8; 8] = b"MIMIC_V1"; 
 
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
@@ -35,7 +38,6 @@ fn inicializar_tabla() {
 
 fn optimizar_windows(puerto: &str) {
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto)]).creation_flags(CREATE_NO_WINDOW).output();
-    // Abrimos también el puerto de archivos TCP 4444
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Files\"", "dir=in", "action=allow", "protocol=TCP", &format!("localport={}", FILE_PORT)]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
 }
@@ -52,38 +54,76 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// --- HILO DE ARCHIVOS (RECEPTOR) ---
-// Escucha en el puerto 4444 y guarda lo que llega en "Descargas"
+// --- SEGURIDAD DE ARCHIVOS ---
+
+// Función para evitar sobrescribir archivos (tesis.pdf -> tesis (1).pdf)
+fn obtener_ruta_unica(mut ruta: PathBuf) -> PathBuf {
+    if !ruta.exists() { return ruta; }
+
+    let file_stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
+    let extension = ruta.extension().unwrap_or_default().to_string_lossy().to_string();
+    let parent = ruta.parent().unwrap().to_path_buf();
+    
+    let mut contador = 1;
+    loop {
+        let nuevo_nombre = if extension.is_empty() {
+            format!("{} ({})", file_stem, contador)
+        } else {
+            format!("{} ({}).{}", file_stem, contador, extension)
+        };
+        
+        let nueva_ruta = parent.join(nuevo_nombre);
+        if !nueva_ruta.exists() {
+            return nueva_ruta;
+        }
+        contador += 1;
+    }
+}
+
+// --- HILO DE ARCHIVOS (RECEPTOR SEGURO) ---
 fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
-        // Escuchamos en TODAS las interfaces (0.0.0.0) para que entre por la VPN
         if let Ok(listener) = TcpListener::bind(format!("0.0.0.0:{}", FILE_PORT)) {
             for stream in listener.incoming() {
                 if let Ok(mut socket) = stream {
                     let handle = app_handle.clone();
                     thread::spawn(move || {
-                        // 1. Leer nombre del archivo (primero longitud u8, luego bytes)
+                        
+                        // 1. SEGURIDAD: Verificar Magic Header (Handshake)
+                        let mut header_buf = [0u8; 8];
+                        if socket.read_exact(&mut header_buf).is_err() || &header_buf != MAGIC_HEADER {
+                            println!("⛔ Conexión rechazada: Cabecera inválida");
+                            return; // Desconectar intruso
+                        }
+
+                        // 2. Leer nombre
                         let mut name_len_buf = [0u8; 1];
                         if socket.read_exact(&mut name_len_buf).is_ok() {
                             let name_len = name_len_buf[0] as usize;
                             let mut name_buf = vec![0u8; name_len];
                             if socket.read_exact(&mut name_buf).is_ok() {
-                                if let Ok(filename) = String::from_utf8(name_buf) {
-                                    // 2. Preparar ruta de descargas
+                                if let Ok(raw_filename) = String::from_utf8(name_buf) {
+                                    
+                                    // 3. SEGURIDAD: Sanitizar nombre (Evitar ../../virus.exe)
+                                    // file_name() elimina cualquier ruta de carpetas y deja solo el archivo
+                                    let safe_filename = Path::new(&raw_filename).file_name().unwrap_or_default();
+                                    
                                     if let Some(mut download_path) = dirs::download_dir() {
-                                        download_path.push(&filename);
+                                        download_path.push(safe_filename);
                                         
-                                        // 3. Guardar contenido
-                                        if let Ok(mut file) = File::create(download_path.clone()) {
-                                            let mut buffer = [0u8; 8192]; // Chunks de 8KB
+                                        // 4. SEGURIDAD: Evitar Sobreescritura
+                                        let final_path = obtener_ruta_unica(download_path);
+                                        let display_name = final_path.file_name().unwrap().to_string_lossy().to_string();
+
+                                        if let Ok(mut file) = File::create(final_path) {
+                                            let mut buffer = [0u8; 8192]; 
                                             let mut received_bytes = 0;
                                             while let Ok(n) = socket.read(&mut buffer) {
-                                                if n == 0 { break; } // Fin del archivo
+                                                if n == 0 { break; } 
                                                 let _ = file.write_all(&buffer[..n]);
                                                 received_bytes += n;
                                             }
-                                            // Avisar al Frontend
-                                            let _ = handle.emit("archivo-recibido", format!("{} ({:.2} MB)", filename, received_bytes as f64 / 1024.0 / 1024.0));
+                                            let _ = handle.emit("archivo-recibido", format!("{} ({:.2} MB)", display_name, received_bytes as f64 / 1024.0 / 1024.0));
                                         }
                                     }
                                 }
@@ -128,27 +168,26 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 
 #[tauri::command]
 fn enviar_archivo(ip_destino: String) -> String {
-    // 1. Abrir Selector de Archivos (Nativo)
     let file = rfd::FileDialog::new().set_title("Selecciona archivo para enviar").pick_file();
 
     if let Some(path) = file {
         let path_clone = path.clone();
         let ip_target = ip_destino.clone();
         
-        // 2. Enviar en un hilo aparte para no congelar la UI
         thread::spawn(move || {
             if let Ok(mut file) = File::open(&path_clone) {
-                // Conectar al puerto 4444 de la IP Virtual del amigo
                 if let Ok(mut socket) = TcpStream::connect(format!("{}:{}", ip_target, FILE_PORT)) {
-                    // A. Enviar Nombre
+                    
+                    // 1. Enviar MAGIC HEADER (La llave para entrar)
+                    let _ = socket.write_all(MAGIC_HEADER);
+
                     if let Some(filename) = path_clone.file_name() {
                         if let Some(name_str) = filename.to_str() {
                             let name_bytes = name_str.as_bytes();
                             if name_bytes.len() < 255 {
-                                let _ = socket.write_all(&[name_bytes.len() as u8]); // Longitud nombre
-                                let _ = socket.write_all(name_bytes); // Nombre
+                                let _ = socket.write_all(&[name_bytes.len() as u8]); 
+                                let _ = socket.write_all(name_bytes); 
                                 
-                                // B. Enviar Contenido
                                 let mut buffer = [0u8; 8192];
                                 while let Ok(n) = file.read(&mut buffer) {
                                     if n == 0 { break; }
@@ -160,28 +199,30 @@ fn enviar_archivo(ip_destino: String) -> String {
                 }
             }
         });
-        return "Enviando en segundo plano...".to_string();
+        return "Enviando de forma segura...".to_string();
     }
     "Cancelado".to_string()
 }
 
-// ... (Resto de funciones: obtener_ip_local, intentar_upnp, agregar_peer, generar_clave_segura IGUALES) ...
 fn obtener_ip_local() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
     socket.connect("8.8.8.8:80").ok()?; 
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
 }
+
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
     match search_gateway(Default::default()) {
         Ok(gateway) => {
-            match gateway.add_port(PortMappingProtocol::UDP, puerto_interno, SocketAddr::V4(SocketAddrV4::new(local_ip, puerto_interno)), 0, "MimicHub-UDP") {
+            let local_socket = SocketAddrV4::new(local_ip, puerto_interno);
+            match gateway.add_port(PortMappingProtocol::UDP, puerto_interno, SocketAddr::V4(local_socket), 0, "MimicHub-UDP") {
                 Ok(_) => format!("ÉXITO UPnP"), Err(e) => format!("FALLO UPnP: {}", e)
             }
         }, Err(_) => "Router no responde".to_string()
     }
 }
+
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_mut() { table.insert(ip_virtual, ip_destino); return "OK".to_string(); } } "Error".to_string()
@@ -205,7 +246,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
     optimizar_windows(&puerto_local);
 
-    // INICIAR RECEPTOR DE ARCHIVOS
     iniciar_receptor_archivos(app_handle.clone());
 
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
@@ -244,14 +284,13 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             }
         }
     });
-    "MIMIC DROP ACTIVO".to_string()
+    "MIMIC DROP SEGURO ACTIVO".to_string()
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        // REGISTRAR enviar_archivo
         .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_clave_segura, intentar_upnp, enviar_archivo])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
