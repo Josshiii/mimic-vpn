@@ -7,17 +7,18 @@ use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
 
+// SEGURIDAD + COMPRESIÓN
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
 use rand::RngCore; 
 use base64::{Engine as _, engine::general_purpose}; 
+use lz4_flex::{compress_prepend_size, decompress_size_prepended}; // <--- EL TURBO
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-// TABLA DE RUTAS
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 fn inicializar_tabla() {
@@ -30,11 +31,19 @@ fn optimizar_windows(puerto: &str) {
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
 }
 
-fn enviar_paquete_seguro(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
+// --- FUNCIÓN DE ENVÍO "TURBO" ---
+// 1. Comprime -> 2. Encripta -> 3. Envía
+fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
+    // A. COMPRESIÓN (LZ4)
+    // Reduce el tamaño del paquete drásticamente antes de encriptar
+    let compressed_data = compress_prepend_size(datos);
+
+    // B. ENCRIPTACIÓN
     let mut nonce_bytes = [0u8; 12];
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
-    if let Ok(encrypted_msg) = cipher.encrypt(nonce, datos) {
+
+    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
         let mut final_packet = nonce_bytes.to_vec();
         final_packet.extend_from_slice(&encrypted_msg);
         let _ = socket.send_to(&final_packet, destino);
@@ -50,14 +59,22 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]);
                     let ciphertext = &buffer[12..size];
-                    if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
-                        if decrypted == HEARTBEAT_MSG {
-                            let _ = app_handle.emit("evento-ping", ());
-                        } else {
-                            if let Ok(mut packet) = session.allocate_send_packet(decrypted.len() as u16) {
-                                packet.bytes_mut().copy_from_slice(&decrypted);
-                                session.send_packet(packet);
-                                let _ = app_handle.emit("trafico-entrada", size);
+
+                    // 1. DESENCRIPTAR
+                    if let Ok(decrypted_compressed) = cipher.decrypt(nonce, ciphertext) {
+                        
+                        // 2. DESCOMPRIMIR (LZ4)
+                        // Intentamos descomprimir. Si falla, descartamos (seguridad extra)
+                        if let Ok(original_data) = decompress_size_prepended(&decrypted_compressed) {
+                            
+                            if original_data == HEARTBEAT_MSG {
+                                let _ = app_handle.emit("evento-ping", ());
+                            } else {
+                                if let Ok(mut packet) = session.allocate_send_packet(original_data.len() as u16) {
+                                    packet.bytes_mut().copy_from_slice(&original_data);
+                                    session.send_packet(packet);
+                                    let _ = app_handle.emit("trafico-entrada", original_data.len());
+                                }
                             }
                         }
                     }
@@ -68,11 +85,9 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 }
 
 // --- COMANDOS ---
-
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
-
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave inválida".to_string() };
     if key_bytes.len() != 32 { return "Longitud incorrecta".to_string(); }
     let key = Key::from_slice(&key_bytes);
@@ -92,7 +107,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
 
     iniciar_hilo_entrada(session_arc.clone(), socket_local.try_clone().unwrap(), cipher.clone(), app_handle.clone());
     
-    // --- HILO DE SALIDA (CORREGIDO) ---
+    // HILO DE SALIDA SWITCH + TURBO
     let socket_out = socket_local.try_clone().unwrap();
     let cipher_out = cipher.clone();
     let app_out = app_handle.clone();
@@ -107,21 +122,18 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
 
-                        // CORRECCIÓN AQUÍ: Obtenemos el guard primero
                         if let Ok(guard) = ROUTING_TABLE.lock() {
-                            // Luego miramos dentro del guard
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast {
                                     for target_real_ip in table.values() {
-                                        enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
+                                        enviar_paquete_turbo(&socket_out, target_real_ip, bytes, &cipher_out);
                                     }
                                 } else {
                                     if let Some(target_real_ip) = table.get(&dest_ip) {
-                                        enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
+                                        enviar_paquete_turbo(&socket_out, target_real_ip, bytes, &cipher_out);
                                     } else {
-                                        // Fallback
                                         for target_real_ip in table.values() {
-                                            enviar_paquete_seguro(&socket_out, target_real_ip, bytes, &cipher_out);
+                                            enviar_paquete_turbo(&socket_out, target_real_ip, bytes, &cipher_out);
                                         }
                                     }
                                 }
@@ -135,36 +147,34 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
         }
     });
 
-    // --- HILO DE LATIDO (CORREGIDO) ---
+    // Hilo Latido (También comprimido para mantener protocolo uniforme)
     let socket_latido = socket_local;
     let cipher_latido = cipher.clone();
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
-            // CORRECCIÓN AQUÍ TAMBIÉN
             if let Ok(guard) = ROUTING_TABLE.lock() {
                 if let Some(table) = guard.as_ref() {
                     for target_real_ip in table.values() {
-                        enviar_paquete_seguro(&socket_latido, target_real_ip, HEARTBEAT_MSG, &cipher_latido);
+                        enviar_paquete_turbo(&socket_latido, target_real_ip, HEARTBEAT_MSG, &cipher_latido);
                     }
                 }
             }
         }
     });
 
-    format!("SWITCH INTELIGENTE ACTIVO")
+    format!("MODO TURBO (LZ4) ACTIVADO")
 }
 
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() {
         if let Some(table) = guard.as_mut() {
-            table.insert(ip_virtual.clone(), ip_destino.clone());
-            println!("RUTA AÑADIDA: {} -> {}", ip_virtual, ip_destino);
+            table.insert(ip_virtual, ip_destino);
             return format!("OK");
         }
     }
-    "Error tabla".to_string()
+    "Error".to_string()
 }
 
 #[tauri::command]
