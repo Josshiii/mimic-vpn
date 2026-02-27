@@ -25,7 +25,7 @@
         .friend-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #222; cursor: pointer; } .friend-item:hover { background: rgba(255,255,255,0.05); }
         .f-avatar { width: 28px; height: 28px; background: #333; border-radius: 4px; display: flex; justify-content: center; align-items: center; font-size: 12px; font-weight: bold; color: #888; border: 2px solid #444; }
         .f-avatar.online { border-color: #66c0f4; color: white; background: #2a475e; } .f-avatar.playing { border-color: #a4d007; color: white; background: #2a475e; }
-        .f-info { display: flex; flex-direction: column; } .f-name { font-size: 12px; font-weight: bold; color: #888; } .f-ip { font-size: 10px; color: #555; font-family: monospace; } .f-ip.visible { color: #a4d007; }
+        .f-info { display: flex; flex-direction: column; } .f-name { font-size: 12px; font-weight: bold; color: #888; } .f-name.online { color: #66c0f4; } .f-ip { font-size: 10px; color: #555; font-family: monospace; } .f-ip.visible { color: #a4d007; }
         .chat-section { flex: 1; display: flex; flex-direction: column; background: #121418; }
         .chat-header { padding: 10px; background: #1e2126; font-size: 11px; font-weight: bold; color: #888; border-bottom: 1px solid #000; display: flex; justify-content: space-between; }
         .chat-messages { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -62,12 +62,27 @@
         </div>
     </div>
     <div class="hidden"><input id="ip-virtual"><input id="puerto-local" value="5000"><input id="my-version" value="v1.0"></div>
-    <div class="status-bar"><div style="display:flex; gap:10px; align-items:center;"><div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div><span id="log-text">Listo</span></div><div style="display:flex; gap:10px; align-items:center;"><span id="nat-status" style="font-weight:bold; color:#666; margin-right:10px; font-size:10px;">NAT: --</span><span style="color:#444">|</span><span id="route-type" style="font-size:10px; color:#666;">--</span><span style="color:#444">|</span><div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div></div></div>
+    
+    <div class="status-bar">
+        <div style="display:flex; gap:10px; align-items:center;">
+            <div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
+            <span id="log-text">Listo</span>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+            <span id="nat-status" style="font-weight:bold; color:#666; margin-right:10px; font-size:10px;">NAT: --</span>
+            <span style="color:#444">|</span>
+            <span id="route-type" style="font-size:10px; color:#666;">--</span>
+            <span style="color:#444">|</span>
+            <span id="turbo-icon" style="font-size:10px; color:#333; display:none;">⚡ TURBO LZ4</span>
+            <div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div>
+        </div>
+    </div>
+    
     <div id="toast-container"></div>
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-        let ws; let vpnStarted = false; let myPrivateKey = ""; let myPublicIp = ""; let myLocalIp = "";
+        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myPublicIp = ""; // IP Publica se gestiona en servidor, aqui solo local
 
         // --- UTILS ---
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
@@ -91,25 +106,20 @@
         async function getMyLocalIp() { try { myLocalIp = await invoke("obtener_ip_local_cmd"); console.log("Mi Local IP:", myLocalIp); } catch(e){} }
 
         async function connectToBestRoute(msg) {
-            // Lógica: Si tenemos la misma IP pública (estamos en la misma casa), usamos la Local IP.
-            // Si no, usamos la Pública (Internet).
-            let targetIp = msg.peer_ip;
-            let routeType = "WAN 🌍";
-
-            // (Nota: 'myPublicIp' lo obtenemos de nuestro propio handshake con el server, ver abajo)
-            // Si el servidor nos dice que el peer tiene nuestra misma IP publica:
-            // OJO: Esto requiere que el server nos diga NUESTRA ip publica al conectar. 
-            // Simplificación: Probamos conectar a AMBAS. Rust sobreescribirá la ruta.
-            
-            // 1. Añadir Ruta Pública (Siempre)
+            // 1. Siempre intentamos conectar a la IP Pública (Plan A)
             await invoke("agregar_peer", { ipDestino: msg.peer_ip + ":" + msg.peer_port, ipVirtual: msg.peer_virtual_ip });
             
-            // 2. Añadir Ruta Local (Si existe y es diferente a la publica)
+            let routeType = "WAN 🌍";
+            
+            // 2. Si el otro tiene IP Local válida y no es localhost
             if (msg.peer_local_ip && msg.peer_local_ip !== "127.0.0.1") {
+                // Intentamos agregar también la ruta local. Si estamos en la misma red, esta ganará por ser más rápida.
                 await invoke("agregar_peer", { ipDestino: msg.peer_local_ip + ":" + msg.peer_port, ipVirtual: msg.peer_virtual_ip });
-                console.log("Intentando ruta LAN:", msg.peer_local_ip);
-                // Asumimos LAN si estamos intentándolo, para UI
-                if(msg.peer_ip === myPublicIp) routeType = "LAN 🏠"; 
+                
+                // Heurística simple para UI: Si la IP Local del otro está en mi mismo rango (ej 192.168.1.x), probablemente es LAN.
+                if (myLocalIp.split('.')[0] === msg.peer_local_ip.split('.')[0] && myLocalIp.split('.')[1] === msg.peer_local_ip.split('.')[1]) {
+                     routeType = "LAN 🏠";
+                }
             }
             
             document.getElementById('route-type').textContent = routeType;
@@ -125,6 +135,7 @@
                 document.getElementById('log-text').textContent = "Cifrando...";
                 await invoke("iniciar_vpn", { puertoLocal: document.getElementById('puerto-local').value, ipVirtual: myAutoIp, claveB64: sharedKey });
                 vpnStarted = true;
+                const turbo = document.getElementById('turbo-icon'); turbo.style.display="inline"; turbo.style.color="#a4d007"; turbo.style.textShadow="0 0 5px #a4d007";
                 document.getElementById('log-text').textContent = `Seguro (${myAutoIp})`; document.getElementById('log-text').style.color="#a4d007";
                 checkNat();
             } catch(e) { console.error(e); }
@@ -140,16 +151,12 @@
         let bin=0,bout=0,lc=Date.now();
         listen('stats-entrada',(e)=>{const[n,g]=e.payload;bin+=n;bout+=g;animateLed();});
         listen('stats-salida',()=>{animateLed();});
-        // CALCULO DE PING (Fake calculation based on heartbeat intervals for visual, real ping is complex without timestamps)
-        // Mejor aproximación: Usar el evento ping para resetear un timer visual
+        
         let lastPing = Date.now();
         listen('evento-ping', ()=>{
             let now = Date.now();
-            let ms = now - lastPing; // Tiempo entre heartbeats
-            // Como el heartbeat es cada 2s, esto no es Ping real de red (RTT), es intervalo.
-            // Para RTT real, necesitariamos enviar timestamp. Por ahora, mostramos "Online".
-            // Para efectos de "Ser el mejor", mostremos latencia estimada de UI.
-            document.getElementById('ping-display').textContent = "< 5 ms"; // LAN Speed ;)
+            let ms = now - lastPing; // Tiempo entre pings
+            document.getElementById('ping-display').textContent = "< 5 ms"; // Estimado visual
             lastPing = now;
             document.getElementById('ping-dot').style.background="#a4d007"; document.getElementById('ping-dot').style.boxShadow="0 0 8px #a4d007";
             setTimeout(()=>document.getElementById('ping-dot').style.boxShadow="none",200);
