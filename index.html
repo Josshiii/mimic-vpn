@@ -10,12 +10,10 @@
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; font-family: 'Inter', sans-serif; }
         body { background-color: #1b2838; color: #c6d4df; height: 100vh; width: 100vw; overflow: hidden; display: flex; }
 
-        /* SCROLLBAR */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #121418; }
         ::-webkit-scrollbar-thumb { background: #3d4450; border-radius: 3px; }
 
-        /* SIDEBAR */
         .sidebar { width: 260px; background-color: #171a21; border-right: 1px solid #000; padding: 20px; display: flex; flex-direction: column; }
         .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; }
         .my-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #66c0f4, #1b2838); border-radius: 50%; margin: 0 auto 10px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; border: 2px solid #66c0f4; }
@@ -31,7 +29,6 @@
         .btn-host:hover { filter: brightness(1.1); }
         .btn-host:disabled { filter: grayscale(1); cursor: default; }
 
-        /* MAIN CONTENT */
         .main-content { flex: 1; background: radial-gradient(circle at top, #2a475e 0%, #1b2838 70%); padding: 20px; display: flex; flex-direction: column; }
         .section-title { font-size: 14px; color: #fff; border-bottom: 1px solid #3d4450; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
         
@@ -41,7 +38,6 @@
         .btn-join { background: #3d4450; color: #fff; border: none; padding: 5px 15px; font-size: 11px; font-weight: bold; border-radius: 2px; cursor: pointer; }
         .btn-join:hover { background: #a4d007; color: #000; }
 
-        /* RIGHT PANEL */
         .right-panel { width: 260px; background: #171a21; border-left: 1px solid #000; display: flex; flex-direction: column; }
         .friends-section { flex: 1; padding: 15px; overflow-y: auto; border-bottom: 1px solid #000; max-height: 50%; }
         .add-friend-box { display: flex; gap: 5px; margin-bottom: 10px; }
@@ -68,14 +64,12 @@
         .chat-input-area { padding: 10px; background: #1e2126; border-top: 1px solid #000; }
         #chat-input { margin: 0; background: #2f3640; border: none; padding: 10px; font-size: 12px; }
 
-        /* TELEMETRY */
         .telemetry-panel { background: #0b0d10; border-top: 1px solid #333; padding: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-family: monospace; }
         .stat-box { background: #171a21; padding: 5px; border-radius: 4px; display: flex; flex-direction: column; align-items: center; }
         .stat-label { font-size: 9px; color: #666; text-transform: uppercase; }
         .stat-value { font-size: 14px; font-weight: bold; color: #fff; }
         .stat-turbo { color: #a4d007; font-size: 10px; }
 
-        /* STATUS BAR */
         .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; }
         .hidden { display: none; }
 
@@ -114,7 +108,7 @@
 
     <div class="right-panel">
         <div class="friends-section">
-            <div style="font-size: 11px; color: #666; font-weight: bold; margin-bottom: 10px;">AMIGOS (CLIC PARA COPIAR IP)</div>
+            <div style="font-size: 11px; color: #666; font-weight: bold; margin-bottom: 10px;">AMIGOS (CLIC COPIAR / 📤 ENVIAR)</div>
             <div class="add-friend-box">
                 <input id="friend-code-input" placeholder="ID Amigo..." style="margin:0; font-size:11px;">
                 <button class="btn-add" onclick="addFriend()">+</button>
@@ -164,7 +158,6 @@
         <div style="display:flex; gap:10px; align-items:center;">
              <span id="nat-status" style="font-weight:bold; color:#666; margin-right:10px; font-size:10px;">NAT: --</span>
              <span style="color:#444">|</span>
-             
              <span id="turbo-icon" style="font-size:10px; color:#333; display:none;">⚡ TURBO LZ4</span>
             <span id="ping-text" style="font-family:monospace;">--</span>
             <div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div>
@@ -227,7 +220,6 @@
 
         // --- CORE: VPN ENGINE ---
         
-        // FUNCIÓN ROMPEHIELOS (UPnP)
         async function checkNat() {
             const statusEl = document.getElementById('nat-status');
             statusEl.textContent = "NAT: NEGOCIANDO..."; statusEl.style.color = "#eab308";
@@ -243,13 +235,11 @@
         async function startVpnEngine(key) {
             if(vpnStarted) return;
             try {
-                document.getElementById('log-text').textContent = "Arrancando...";
+                document.getElementById('log-text').textContent = "Iniciando...";
                 await invoke("iniciar_vpn", { puertoLocal: document.getElementById('puerto-local').value, ipVirtual: myAutoIp, claveB64: key });
                 vpnStarted = true;
                 const turbo = document.getElementById('turbo-icon'); turbo.style.display = "inline"; turbo.style.color = "#a4d007"; turbo.style.textShadow = "0 0 5px #a4d007";
                 document.getElementById('log-text').textContent = `Activo (${myAutoIp})`; document.getElementById('log-text').style.color = "#a4d007";
-                
-                // ACTIVAR UPnP
                 checkNat(); 
             } catch(e) { console.error("Error motor:", e); }
         }
@@ -257,6 +247,23 @@
         async function addPeer(realIp, port, virtualIp) {
             try { await invoke("agregar_peer", { ipDestino: realIp + ":" + port, ipVirtual: virtualIp }); } catch(e) { console.error(e); }
         }
+
+        // --- MIMIC DROP (ARCHIVOS) ---
+        window.sendFile = async (ipVirtual) => {
+            if (ipVirtual === "Offline") return;
+            try {
+                showToast("Selecciona un archivo...", "info");
+                const res = await invoke("enviar_archivo", { ipDestino: ipVirtual });
+                if(res.includes("Enviando")) showToast("📤 Enviando archivo...", "info");
+            } catch(e) { console.error(e); }
+        };
+
+        listen('archivo-recibido', (event) => {
+            const filename = event.payload;
+            playSound('join'); 
+            showToast(`📥 Recibido: ${filename}`, "info");
+            if(document.hidden) new Notification("Mimic Drop", { body: `Archivo recibido: ${filename}` });
+        });
 
         // --- TELEMETRÍA ---
         let bytesIn_Net = 0, bytesIn_Game = 0, lastCheck = Date.now();
@@ -300,7 +307,7 @@
         }
         function sendLogin() { ws.send(JSON.stringify({ type: 'LOGIN', id: myId, name: document.getElementById('my-name').value, virtualIp: myAutoIp })); }
 
-        // --- UI ACTIONS ---
+        // --- ACCIONES UI ---
         document.getElementById('btn-host').addEventListener('click', async () => {
             const code = Math.random().toString(36).substring(7);
             const secureKey = await invoke("generar_clave_segura");
@@ -308,7 +315,7 @@
             const password = document.getElementById('host-password').value.trim();
             await startVpnEngine(secureKey);
             ws.send(JSON.stringify({ type: 'HOST', room: code, hostName: document.getElementById('my-name').value, gameName: document.getElementById('my-game').value, gameVer: "v1.0", payload: document.getElementById('puerto-local').value, virtualIp: myAutoIp, key: secureKey, password: password }));
-            document.getElementById('log-text').textContent = "Sala Lista";
+            document.getElementById('log-text').textContent = "Host Activo";
             document.getElementById('btn-host').disabled = true; document.getElementById('host-password').disabled = true;
             enableChat();
         });
@@ -320,15 +327,21 @@
         };
 
         function enableChat() { document.getElementById('chat-input').disabled = false; document.getElementById('chat-status').style.color = "#a4d007"; document.getElementById('chat-box').innerHTML = ""; addChatMessage("", "¡Sistema En Línea!", true); }
-        function renderFriends(op) {
-            const l = document.getElementById('friends-list'); l.innerHTML = "";
-            friends.forEach(f => {
-                const o = op.find(p => p.id === f.id);
-                const s = o ? (o.status === "Jugando" ? "playing" : "online") : "";
-                if(o) f.name = o.name;
-                const ip = o && o.virtualIp ? o.virtualIp : "Offline";
-                const vis = o ? "visible" : "";
-                l.innerHTML += `<div class="friend-item" onclick="copyToClipboard('${ip}', 'IP Copiada')"><div class="f-avatar ${s}">${f.name.charAt(0).toUpperCase()}</div><div class="f-info"><div class="f-name ${s}">${f.name}</div><div class="f-ip ${vis}">${ip}</div></div></div>`;
+        
+        function renderFriends(onlinePlayers) {
+            const listEl = document.getElementById('friends-list'); listEl.innerHTML = "";
+            friends.forEach(friend => {
+                const onlineData = onlinePlayers.find(p => p.id === friend.id);
+                let statusClass = onlineData ? (onlineData.status === "Jugando" ? "playing" : "online") : "";
+                if(onlineData) friend.name = onlineData.name;
+                
+                const ipDisplay = onlineData && onlineData.virtualIp ? onlineData.virtualIp : "Offline";
+                const ipClass = onlineData ? "visible" : "";
+                
+                // BOTÓN DE ENVÍO DE ARCHIVO (NUEVO)
+                const fileBtn = onlineData ? `<button class="btn-add" style="margin-left:auto; font-size:10px;" onclick="event.stopPropagation(); sendFile('${ipDisplay}')">📤</button>` : "";
+
+                listEl.innerHTML += `<div class="friend-item" onclick="copyToClipboard('${ipDisplay}', 'IP Copiada')"><div class="f-avatar ${statusClass}">${friend.name.charAt(0).toUpperCase()}</div><div class="f-info"><div class="f-name ${statusClass}">${friend.name}</div><div class="f-ip ${ipClass}">${ipDisplay}</div></div>${fileBtn}</div>`;
             });
             localStorage.setItem('mimic_friends', JSON.stringify(friends));
         }
