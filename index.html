@@ -62,27 +62,12 @@
         </div>
     </div>
     <div class="hidden"><input id="ip-virtual"><input id="puerto-local" value="5000"><input id="my-version" value="v1.0"></div>
-    
-    <div class="status-bar">
-        <div style="display:flex; gap:10px; align-items:center;">
-            <div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div>
-            <span id="log-text">Listo</span>
-        </div>
-        <div style="display:flex; gap:10px; align-items:center;">
-            <span id="nat-status" style="font-weight:bold; color:#666; margin-right:10px; font-size:10px;">NAT: --</span>
-            <span style="color:#444">|</span>
-            <span id="route-type" style="font-size:10px; color:#666;">--</span>
-            <span style="color:#444">|</span>
-            <span id="turbo-icon" style="font-size:10px; color:#333; display:none;">⚡ TURBO LZ4</span>
-            <div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div>
-        </div>
-    </div>
-    
+    <div class="status-bar"><div style="display:flex; gap:10px; align-items:center;"><div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div><span id="log-text">Listo</span></div><div style="display:flex; gap:10px; align-items:center;"><span id="nat-status" style="font-weight:bold; color:#666; margin-right:10px; font-size:10px;">NAT: --</span><span style="color:#444">|</span><span id="route-type" style="font-size:10px; color:#666;">--</span><span style="color:#444">|</span><span id="turbo-icon" style="font-size:10px; color:#333; display:none;">⚡ TURBO LZ4</span><div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div></div></div>
     <div id="toast-container"></div>
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null;
+        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null; let myPublicIp = "";
 
         // --- UTILS ---
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
@@ -105,31 +90,34 @@
         // --- LOGICA HÍBRIDA + STUN ---
         async function getMyLocalIp() { try { myLocalIp = await invoke("obtener_ip_local_cmd"); console.log("Mi Local IP:", myLocalIp); } catch(e){} }
 
-        // Listener STUN (Nuevo)
+        // STUN LISTENER (NUEVO)
         listen('stun-result', (event) => {
             const [ip, port] = event.payload;
             console.log("STUN Detectado:", ip, port);
             myStunPort = port; 
+            myPublicIp = ip; 
             showToast(`NAT Abierta (Puerto ${port})`, "info");
         });
 
         async function connectToBestRoute(msg) {
-            // 1. Siempre intentamos conectar a la IP Pública (Plan A)
-            await invoke("agregar_peer", { ipDestino: msg.peer_ip + ":" + msg.peer_port, ipVirtual: msg.peer_virtual_ip });
+            // 1. Plan A: WAN (Internet) usando el puerto que nos dijo el peer (STUN o Local)
+            let wanPort = msg.peer_port; 
+            await invoke("agregar_peer", { ipDestino: msg.peer_ip + ":" + wanPort, ipVirtual: msg.peer_virtual_ip });
             
             let routeType = "WAN 🌍";
             
-            // 2. Si el otro tiene IP Local válida y no es localhost
+            // 2. Plan B: LAN (Si estamos en la misma red)
             if (msg.peer_local_ip && msg.peer_local_ip !== "127.0.0.1") {
-                // Intentamos agregar también la ruta local.
-                await invoke("agregar_peer", { ipDestino: msg.peer_local_ip + ":" + msg.peer_port, ipVirtual: msg.peer_virtual_ip });
+                // Intentamos conectar a la IP local también. El switch elegirá la que funcione primero.
+                // Importante: En LAN solemos usar el puerto interno (5000 por defecto), no el STUN
+                // Pero como no sabemos si usó upnp, probamos el puerto reportado
+                await invoke("agregar_peer", { ipDestino: msg.peer_local_ip + ":" + document.getElementById('puerto-local').value, ipVirtual: msg.peer_virtual_ip });
                 
-                // Heurística simple para UI
+                // Si nuestras IPs locales se parecen, asumimos LAN para la UI
                 if (myLocalIp.split('.')[0] === msg.peer_local_ip.split('.')[0] && myLocalIp.split('.')[1] === msg.peer_local_ip.split('.')[1]) {
                      routeType = "LAN 🏠";
                 }
             }
-            
             document.getElementById('route-type').textContent = routeType;
             document.getElementById('route-type').style.color = routeType.includes("LAN") ? "#a4d007" : "#06b6d4";
         }
@@ -145,7 +133,10 @@
                 vpnStarted = true;
                 const turbo = document.getElementById('turbo-icon'); turbo.style.display="inline"; turbo.style.color="#a4d007"; turbo.style.textShadow="0 0 5px #a4d007";
                 document.getElementById('log-text').textContent = `Seguro (${myAutoIp})`; document.getElementById('log-text').style.color="#a4d007";
-                checkNat();
+                
+                // Intentamos UPnP como fallback si STUN falla o para ayudar
+                checkNat(); 
+                
                 showToast("💡 Consejo: Puedes cerrar la ventana, la VPN seguirá activa.", "info");
             } catch(e) { console.error(e); }
         }
@@ -160,7 +151,6 @@
         let bin=0,bout=0,lc=Date.now();
         listen('stats-entrada',(e)=>{const[n,g]=e.payload;bin+=n;bout+=g;animateLed();});
         listen('stats-salida',()=>{animateLed();});
-        
         let lastPing = Date.now();
         listen('evento-ping', ()=>{
             let now = Date.now();
@@ -170,7 +160,6 @@
             document.getElementById('ping-dot').style.background="#a4d007"; document.getElementById('ping-dot').style.boxShadow="0 0 8px #a4d007";
             setTimeout(()=>document.getElementById('ping-dot').style.boxShadow="none",200);
         });
-
         setInterval(()=>{const n=Date.now(),d=(n-lc)/1000;lc=n;if(bout>0){const s=(bout/1024)/d;const sa=100-((bin/bout)*100);document.getElementById('speed-display').textContent=s.toFixed(1)+" KB/s";document.getElementById('turbo-display').textContent=(sa>0?sa.toFixed(0):"0")+"%";document.getElementById('turbo-display').style.color="#a4d007";bin=0;bout=0;}else{document.getElementById('speed-display').textContent="0 KB/s";}},1000);
         function animateLed(){const l=document.getElementById('traffic-led');l.style.background="#a4d007";setTimeout(()=>{l.style.background="#333";},50);}
 
@@ -201,16 +190,16 @@
         document.getElementById('btn-host').addEventListener('click',async()=>{
             const code=Math.random().toString(36).substring(7); const pwd=document.getElementById('host-password').value.trim();
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
-            // USAR PUERTO STUN SI EXISTE
-            const realPort = myStunPort || document.getElementById('puerto-local').value;
-            ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:realPort,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
+            // ENVIO PUERTO STUN SI EXISTE, SI NO EL LOCAL
+            const portToSend = myStunPort || document.getElementById('puerto-local').value;
+            ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; document.getElementById('host-password').disabled=true; enableChat();
         });
         window.join=async(code,hasPwd)=>{
             let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:");if(pwd===null)return;}
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
-            const realPort = myStunPort || document.getElementById('puerto-local').value;
-            ws.send(JSON.stringify({type:'JOIN',room:code,payload:realPort,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
+            const portToSend = myStunPort || document.getElementById('puerto-local').value;
+            ws.send(JSON.stringify({type:'JOIN',room:code,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
         };
 
         function enableChat(){document.getElementById('chat-input').disabled=false;document.getElementById('chat-status').style.color="#a4d007";document.getElementById('chat-box').innerHTML="";addChatMessage("","Red Híbrida Lista",true);}
