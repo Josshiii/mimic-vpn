@@ -8,38 +8,28 @@
         body { background-color: #1b2838; color: #c6d4df; height: 100vh; width: 100vw; overflow: hidden; display: flex; }
         ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #121418; } ::-webkit-scrollbar-thumb { background: #3d4450; border-radius: 3px; }
         .sidebar { width: 260px; background-color: #171a21; border-right: 1px solid #000; padding: 20px; display: flex; flex-direction: column; }
-        
         .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; }
-        .profile-actions { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
-        .btn-icon { background: #3d4450; border: none; color: #ccc; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; transition: 0.2s; }
-        .btn-icon:hover { background: #66c0f4; color: #000; }
         .my-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #66c0f4, #1b2838); border-radius: 50%; margin: 0 auto 10px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; border: 2px solid #66c0f4; }
         .my-id-box { background: #000; padding: 5px; font-family: monospace; font-size: 11px; color: #a4d007; border-radius: 4px; margin-top: 5px; cursor: pointer; }
         .copy-tooltip { font-size: 9px; color: #666; margin-top: 2px; }
-        
+        .profile-actions { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+        .btn-icon { background: #3d4450; border: none; color: #ccc; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; transition: 0.2s; }
+        .btn-icon:hover { background: #66c0f4; color: #000; }
         label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 5px; display: block; margin-top: 10px; }
         input { width: 100%; background: #101216; border: 1px solid #3d4450; color: #fff; padding: 8px; border-radius: 4px; font-size: 13px; outline: none; } input:focus { border-color: #66c0f4; }
-        
         .btn-host { margin-top: 20px; background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%); color: white; border: none; padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; } .btn-host:disabled { filter: grayscale(1); cursor: default; }
         .main-content { flex: 1; background: radial-gradient(circle at top, #2a475e 0%, #1b2838 70%); padding: 20px; display: flex; flex-direction: column; }
         .section-title { font-size: 14px; color: #fff; border-bottom: 1px solid #3d4450; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
         .lobby-list { flex: 1; overflow-y: auto; }
         .lobby-card { background: rgba(0,0,0,0.2); padding: 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #a4d007; transition: 0.2s; } .lobby-card:hover { background: rgba(255,255,255,0.05); }
         .btn-join { background: #3d4450; color: #fff; border: none; padding: 5px 15px; font-size: 11px; font-weight: bold; border-radius: 2px; cursor: pointer; } .btn-join:hover { background: #a4d007; color: #000; }
-        
         .right-panel { width: 260px; background: #171a21; border-left: 1px solid #000; display: flex; flex-direction: column; }
         .friends-section { flex: 1; padding: 15px; overflow-y: auto; border-bottom: 1px solid #000; max-height: 50%; }
         .add-friend-box { display: flex; gap: 5px; margin-bottom: 10px; } .btn-add { background: #3d4450; border: 1px solid #555; color: white; width: 30px; cursor: pointer; border-radius: 4px; }
-        
-        /* ESTILO BOTÓN KICK */
-        .btn-kick { background: #ef4444; color: white; border: none; border-radius: 4px; width: 20px; height: 20px; font-size: 10px; cursor: pointer; margin-left: 5px; display: flex; align-items: center; justify-content: center; }
-        .btn-kick:hover { background: #dc2626; }
-
         .friend-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #222; cursor: pointer; } .friend-item:hover { background: rgba(255,255,255,0.05); }
         .f-avatar { width: 28px; height: 28px; background: #333; border-radius: 4px; display: flex; justify-content: center; align-items: center; font-size: 12px; font-weight: bold; color: #888; border: 2px solid #444; }
         .f-avatar.online { border-color: #66c0f4; color: white; background: #2a475e; } .f-avatar.playing { border-color: #a4d007; color: white; background: #2a475e; }
         .f-info { display: flex; flex-direction: column; } .f-name { font-size: 12px; font-weight: bold; color: #888; } .f-name.online { color: #66c0f4; } .f-ip { font-size: 10px; color: #555; font-family: monospace; } .f-ip.visible { color: #a4d007; }
-        
         .chat-section { flex: 1; display: flex; flex-direction: column; background: #121418; }
         .chat-header { padding: 10px; background: #1e2126; font-size: 11px; font-weight: bold; color: #888; border-bottom: 1px solid #000; display: flex; justify-content: space-between; }
         .chat-messages { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
@@ -108,7 +98,29 @@
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
+        
+        // --- IMPORTS PARA ACTUALIZADOR AUTOMÁTICO ---
+        import { check } from '@tauri-apps/plugin-updater';
+        import { relaunch } from '@tauri-apps/plugin-process';
+
         let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null; let myPublicIp = ""; let reconnectAttempts = 0; let currentRoomCode = ""; let amIHost = false;
+
+        // --- SISTEMA DE ACTUALIZACIÓN AUTOMÁTICA ---
+        async function checkForUpdates() {
+            try {
+                const update = await check();
+                if (update) {
+                    showToast(`🚀 Nueva versión ${update.version} detectada. Descargando...`, "info");
+                    await update.downloadAndInstall();
+                    showToast("Actualización lista. Reiniciando...", "success");
+                    await relaunch();
+                }
+            } catch (e) {
+                console.log("No hay actualizaciones o error de firma (normal en dev)", e);
+            }
+        }
+        // Ejecutar al inicio
+        checkForUpdates();
 
         // --- UTILS ---
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
@@ -135,27 +147,16 @@
 
         function renderFriends(onlinePlayers){
             const l=document.getElementById('friends-list');l.innerHTML="";
-            // Combinar amigos guardados con jugadores en la sala actual (si estamos jugando)
             let displayList = [...friends];
-            
-            // Si estamos en una sala, mostrar a todos los conectados en esa sala, sean amigos o no
-            if (onlinePlayers && onlinePlayers.length > 0) {
-                // Filtrar solo los de mi sala (esto lo hace el server enviando solo updates relevantes, simplificamos aqui asumiendo que onlinePlayers son los relevantes)
-                // Para simplificar: el servidor manda TODOS. Filtramos en cliente si quisiéramos, pero mostremos los "online"
-            }
-
-            // MODERACIÓN: Renderizar lista
+            // Renderizar lista combinada
             friends.forEach(f=>{
                 const o=onlinePlayers.find(p=>p.id===f.id);
                 const s=o?(o.status==="Jugando"?"playing":"online"):"";
                 if(o)f.name=o.name;
                 const ip=o&&o.virtualIp?o.virtualIp:"Offline";
-                
-                // Botón de Kick solo si soy Host y el usuario está conectado y no soy yo
                 let actions = "";
                 if(o) actions += `<button class="btn-add" style="margin-left:auto;font-size:10px;" onclick="event.stopPropagation();sendFile('${ip}')">📤</button>`;
                 if(amIHost && o && o.id !== myId) actions += `<button class="btn-kick" onclick="event.stopPropagation();kickPlayer('${f.id}')">👢</button>`;
-
                 l.innerHTML+=`<div class="friend-item" onclick="copyToClipboard('${ip}','IP Copiada')"><div class="f-avatar ${s}">${f.name.charAt(0).toUpperCase()}</div><div class="f-info"><div class="f-name ${s}">${f.name}</div><div class="f-ip ${o?"visible":""}">${ip}</div></div>${actions}</div>`;
             });
             localStorage.setItem('mimic_friends',JSON.stringify(friends));
@@ -198,7 +199,7 @@
         window.toggleRelay = async () => {
             const isChecked = document.getElementById('relay-toggle').checked;
             if (isChecked) {
-                const relayServer = "127.0.0.1:10000"; // CAMBIAR IP EN PRODUCCIÓN
+                const relayServer = "127.0.0.1:10000"; 
                 try { const res = await invoke("activar_relay", { serverIp: relayServer, miIpVirtual: myAutoIp }); showToast(res, "success"); } catch(e) { showToast("Error Relay", "error"); }
             } else { showToast("Reinicia para desactivar", "info"); }
         };
@@ -226,10 +227,10 @@
                 const msg=JSON.parse(e.data);
                 if(msg.type==='STATE_UPDATE'){renderLobbies(msg.lobbies);renderFriends(msg.players);}
                 if(msg.type==='ERROR'){showToast(msg.message,'error');}
-                if(msg.type==='KICKED'){showToast(msg.message,'error'); setTimeout(()=>location.reload(), 2000); } // EXPULSADO
+                if(msg.type==='KICKED'){showToast(msg.message,'error'); setTimeout(()=>location.reload(), 2000); }
                 if(msg.type==='MATCH'){
-                    if(msg.role === 'HOST') amIHost = true; // SOY HOST
-                    if(!friends.some(f=>f.id === msg.peer_id)) { friends.push({id:msg.peer_id, name:"Jugador"}); } // Añadir temporalmente a la lista
+                    if(msg.role === 'HOST') amIHost = true; 
+                    if(!friends.some(f=>f.id === msg.peer_id)) { friends.push({id:msg.peer_id, name:"Jugador"}); }
                     const sharedSecret = await invoke("calcular_secreto", { miPrivada: myPrivateKey, suPublica: msg.peer_public_key });
                     await startVpnEngine(sharedSecret); await connectToBestRoute(msg);
                     enableChat(); playSound('join'); showToast("Conectado","info");
@@ -243,7 +244,7 @@
         document.getElementById('btn-host').addEventListener('click',async()=>{
             const code=Math.random().toString(36).substring(7); currentRoomCode = code;
             const pwd=document.getElementById('host-password').value.trim(); localStorage.setItem('mimic_last_pwd', pwd);
-            const isPrivate = document.getElementById('private-lobby').checked; // PRIVACIDAD
+            const isPrivate = document.getElementById('private-lobby').checked; 
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1], isPrivate: isPrivate}));
