@@ -36,7 +36,12 @@
     ],
     "resources": [
       "wintun.dll"
-    ]
+    ],
+    "windows": {
+      "protocol": {
+        "schemes": ["mimic"]
+      }
+    }
   },
   "plugins": {
     "updater": {
