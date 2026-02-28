@@ -37,42 +37,21 @@ static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
-// --- MIMIC SHIELD: FILTRO DE SEGURIDAD ---
-// Esta función decide si un paquete es peligroso
 fn es_paquete_seguro(packet: &[u8]) -> bool {
-    // 1. Verificación básica de longitud IPv4 (Header mínimo 20 bytes)
     if packet.len() < 20 { return false; }
-
-    // 2. Extraer Protocolo (Byte 9)
     let protocol = packet[9];
-    
-    // Solo permitimos TCP (6), UDP (17) e ICMP (1 - Ping)
     if protocol != 6 && protocol != 17 && protocol != 1 { return false; }
-
-    // Si es TCP o UDP, verificar puertos destino
     if protocol == 6 || protocol == 17 {
-        if packet.len() < 24 { return false; } // Header IP (20) + Puertos (4)
-        
-        // Los puertos están en los bytes 22-23 (Destino)
+        if packet.len() < 24 { return false; } 
         let dest_port = ((packet[22] as u16) << 8) | (packet[23] as u16);
-
-        // --- BLACKLIST DE PUERTOS PELIGROSOS ---
-        // Bloqueamos servicios de Windows vulnerables a ataques
         match dest_port {
-            135 => return false, // RPC - Muy peligroso
-            137 | 138 | 139 => return false, // NetBIOS - Info del sistema
-            445 => return false, // SMB - Carpetas Compartidas (WannaCry)
-            3389 => return false, // RDP - Escritorio Remoto
-            5900 => return false, // VNC - Control remoto
-            23 => return false, // Telnet
-            21 => return false, // FTP
-            _ => {} // El resto (juegos, que usan puertos altos) pasa
+            135 | 137 | 138 | 139 | 445 | 3389 | 5900 | 23 | 21 => return false, 
+            _ => {} 
         }
     }
     true
 }
 
-// ... (Resto de utilidades: conectar_discord, detectar_juego, etc. IGUALES) ...
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -216,42 +195,23 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
         }
     });
 }
-
-// --- ENGINE CON SHIELD (FIREWALL ACTIVO) ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
-        
-        // ANTI-FLOOD (Rate Limiting)
         let mut packet_count = 0;
         let mut last_second = Instant::now();
-
         loop {
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
-                // 1. CONTROL DE INUNDACIÓN (DDoS protection)
                 packet_count += 1;
-                if packet_count > 5000 { // Si recibimos más de 5000 paquetes/segundo
-                    if last_second.elapsed().as_secs() < 1 {
-                        continue; // DROP (Ignorar paquetes extra)
-                    } else {
-                        packet_count = 0;
-                        last_second = Instant::now();
-                    }
+                if packet_count > 5000 { 
+                    if last_second.elapsed().as_secs() < 1 { continue; } else { packet_count = 0; last_second = Instant::now(); }
                 }
-
                 if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
-                
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         if let Ok(original) = decompress_size_prepended(&decrypted) {
-                            
-                            // 2. MIMIC SHIELD: Inspección de Paquetes
-                            if !es_paquete_seguro(&original) {
-                                // Paquete malicioso bloqueado (Puerto 445, 3389, etc.)
-                                continue; // DROP (A la basura)
-                            }
-
+                            if !es_paquete_seguro(&original) { continue; }
                             if original == HEARTBEAT_MSG { let _ = app_handle.emit("evento-ping", ()); } 
                             else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original.len() as u16) {
@@ -266,8 +226,6 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         }
     });
 }
-
-// ... (Resto de funciones: obtener_ip_local, etc. IGUALES) ...
 fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
@@ -406,6 +364,8 @@ use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIco
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // !!! AQUÍ ESTÁ EL CAMBIO CRÍTICO PARA EL UPDATER !!!
+        .plugin(tauri_plugin_updater::Builder::new().build()) // <--- REGISTRAR EL PLUGIN
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, 
