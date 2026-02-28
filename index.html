@@ -36,7 +36,6 @@
         .stat-box { background: #171a21; padding: 5px; border-radius: 4px; display: flex; flex-direction: column; align-items: center; }
         .stat-label { font-size: 9px; color: #666; text-transform: uppercase; } .stat-value { font-size: 14px; font-weight: bold; color: #fff; } .stat-turbo { color: #a4d007; font-size: 10px; }
         
-        /* GRÁFICO NUEVO */
         #net-canvas { width: 100%; height: 40px; background: #000; border-radius: 4px; border: 1px solid #333; margin-top: 5px; }
 
         .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; } .hidden { display: none; }
@@ -76,7 +75,7 @@
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null; let myPublicIp = "";
+        let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null; let myPublicIp = ""; let reconnectAttempts = 0;
 
         // --- UTILS ---
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
@@ -84,7 +83,7 @@
         const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
         function playSound(t){if(audioCtx.state==='suspended')audioCtx.resume();const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);if(t==='msg'){o.type='sine';o.frequency.setValueAtTime(800,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(400,audioCtx.currentTime+0.1);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);o.start();o.stop(audioCtx.currentTime+0.1);}else if(t==='join'){o.type='triangle';o.frequency.setValueAtTime(440,audioCtx.currentTime);o.frequency.linearRampToValueAtTime(880,audioCtx.currentTime+0.2);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.3);o.start();o.stop(audioCtx.currentTime+0.3);}}
 
-        // --- INIT & PERSISTENCIA ---
+        // --- INIT ---
         let myId=localStorage.getItem('mimic_id');if(!myId){myId='M-'+Math.random().toString(36).substr(2,6).toUpperCase();localStorage.setItem('mimic_id',myId);}
         document.getElementById('my-id-display').textContent=myId;
         const myAutoIp=(()=>{let h=0;for(let i=0;i<myId.length;i++)h=myId.charCodeAt(i)+((h<<5)-h);return`10.10.10.${(Math.abs(h)%253)+2}`;})();
@@ -92,8 +91,6 @@
         
         let savedName=localStorage.getItem('mimic_name')||"Jugador"; document.getElementById('my-name').value=savedName;
         document.getElementById('ui-name-display').textContent=savedName; document.getElementById('ui-avatar').textContent=savedName.charAt(0).toUpperCase();
-        
-        // Recuperar última sala usada
         document.getElementById('host-password').value = localStorage.getItem('mimic_last_pwd') || "";
         
         document.getElementById('my-name').addEventListener('input',(e)=>{localStorage.setItem('mimic_name',e.target.value);document.getElementById('ui-name-display').textContent=e.target.value;document.getElementById('ui-avatar').textContent=e.target.value.charAt(0).toUpperCase();if(ws&&ws.readyState===1)sendLogin();});
@@ -140,26 +137,18 @@
 
         // --- NET GRAPH & TELEMETRY ---
         let bin=0,bout=0,lc=Date.now();
-        // Variables para el gráfico
         const canvas = document.getElementById('net-canvas'); const ctx = canvas.getContext('2d');
-        let trafficHistory = new Array(50).fill(0); // Últimos 50 puntos
-        
+        let trafficHistory = new Array(50).fill(0); 
         function drawGraph() {
             ctx.clearRect(0,0,canvas.width,canvas.height);
             ctx.beginPath(); ctx.moveTo(0, canvas.height);
             for(let i=0; i<trafficHistory.length; i++) {
-                const val = trafficHistory[i];
-                const h = (val / 1024) * 2; // Escala simple
-                const x = (i / trafficHistory.length) * canvas.width;
-                const y = canvas.height - Math.min(h, canvas.height);
-                ctx.lineTo(x, y);
+                const val = trafficHistory[i]; const h = (val / 1024) * 2; const x = (i / trafficHistory.length) * canvas.width; const y = canvas.height - Math.min(h, canvas.height); ctx.lineTo(x, y);
             }
             ctx.strokeStyle = '#a4d007'; ctx.lineWidth = 2; ctx.stroke();
         }
-
         listen('stats-entrada',(e)=>{const[n,g]=e.payload;bin+=n;bout+=g;animateLed(); trafficHistory.push(n); trafficHistory.shift(); drawGraph(); });
         listen('stats-salida',(e)=>{const n = e.payload; animateLed(); trafficHistory.push(n); trafficHistory.shift(); drawGraph(); });
-        
         let lastPing = Date.now();
         listen('evento-ping', ()=>{
             let now = Date.now(); let ms = now - lastPing; document.getElementById('ping-display').textContent = "< 5 ms"; lastPing = now;
@@ -185,10 +174,15 @@
             } catch(e) {}
         }, 5000);
 
-        // --- WEBSOCKET ---
+        // --- WEBSOCKET CON RECONEXIÓN INTELIGENTE ---
         function connect() {
             document.getElementById('server-status').textContent="Conectando..."; ws=new WebSocket(SERVER_URL);
-            ws.onopen=async ()=>{ document.getElementById('server-status').textContent="EN LÍNEA";document.getElementById('server-status').style.color="#a4d007"; await getMyLocalIp(); sendLogin(); };
+            ws.onopen=async ()=>{ 
+                reconnectAttempts = 0; // Reset
+                document.getElementById('server-status').textContent="EN LÍNEA";document.getElementById('server-status').style.color="#a4d007"; 
+                await getMyLocalIp(); 
+                sendLogin(); 
+            };
             ws.onmessage=async(e)=>{
                 const msg=JSON.parse(e.data);
                 if(msg.type==='STATE_UPDATE'){renderLobbies(msg.lobbies);renderFriends(msg.players);}
@@ -200,21 +194,34 @@
                 }
                 if(msg.type==='CHAT_MSG'){addChatMessage(msg.sender,msg.text);if(document.hidden)playSound('msg');}
             };
-            ws.onclose=()=>{vpnStarted=false;setTimeout(connect,3000);};
+            ws.onclose=()=>{
+                vpnStarted=false;
+                document.getElementById('server-status').textContent="DESCONECTADO";
+                document.getElementById('server-status').style.color="#ef4444";
+                
+                // Estrategia Exponential Backoff
+                let delay = Math.min(2000 * (reconnectAttempts + 1), 30000); // Max 30s
+                showToast(`⚠️ Sin conexión. Reintentando en ${delay/1000}s...`, "error");
+                
+                setTimeout(() => {
+                    reconnectAttempts++;
+                    connect();
+                }, delay);
+            };
         }
         function sendLogin(){ws.send(JSON.stringify({type:'LOGIN',id:myId,name:document.getElementById('my-name').value,virtualIp:myAutoIp, localIp: myLocalIp}));}
 
         document.getElementById('btn-host').addEventListener('click',async()=>{
             const code=Math.random().toString(36).substring(7); const pwd=document.getElementById('host-password').value.trim();
-            localStorage.setItem('mimic_last_pwd', pwd); // Guardar pass
+            localStorage.setItem('mimic_last_pwd', pwd);
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; document.getElementById('host-password').disabled=true; enableChat();
-            copyToClipboard(code, "Código de Sala Copiado"); // Auto-Copy
+            copyToClipboard(code, "Código de Sala Copiado");
         });
         window.join=async(code,hasPwd)=>{
-            let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:") || ""; if(hasPwd && !pwd)return;} // Fix prompt cancel
+            let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:") || ""; if(hasPwd && !pwd)return;}
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'JOIN',room:code,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
