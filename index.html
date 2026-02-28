@@ -11,6 +11,7 @@
         .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; }
         .my-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #66c0f4, #1b2838); border-radius: 50%; margin: 0 auto 10px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; border: 2px solid #66c0f4; }
         .my-id-box { background: #000; padding: 5px; font-family: monospace; font-size: 11px; color: #a4d007; border-radius: 4px; margin-top: 5px; cursor: pointer; }
+        .copy-tooltip { font-size: 9px; color: #666; margin-top: 2px; }
         label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 5px; display: block; margin-top: 10px; }
         input { width: 100%; background: #101216; border: 1px solid #3d4450; color: #fff; padding: 8px; border-radius: 4px; font-size: 13px; outline: none; } input:focus { border-color: #66c0f4; }
         .btn-host { margin-top: 20px; background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%); color: white; border: none; padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; } .btn-host:disabled { filter: grayscale(1); cursor: default; }
@@ -34,6 +35,10 @@
         .telemetry-panel { background: #0b0d10; border-top: 1px solid #333; padding: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-family: monospace; }
         .stat-box { background: #171a21; padding: 5px; border-radius: 4px; display: flex; flex-direction: column; align-items: center; }
         .stat-label { font-size: 9px; color: #666; text-transform: uppercase; } .stat-value { font-size: 14px; font-weight: bold; color: #fff; } .stat-turbo { color: #a4d007; font-size: 10px; }
+        
+        /* GRÁFICO NUEVO */
+        #net-canvas { width: 100%; height: 40px; background: #000; border-radius: 4px; border: 1px solid #333; margin-top: 5px; }
+
         .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; } .hidden { display: none; }
         #toast-container { position: fixed; bottom: 40px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 1000; }
         .toast { background: #171a21; border-left: 4px solid #a4d007; padding: 12px 20px; color: white; border-radius: 4px; font-size: 12px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: translateX(100%); transition: transform 0.3s; display: flex; align-items: center; gap: 10px; } .toast.error { border-left-color: #ef4444; } .toast.show { transform: translateX(0); }
@@ -60,6 +65,9 @@
                 <div class="stat-box"><span class="stat-label">PING</span><span class="stat-value" id="ping-display">-- ms</span></div>
                 <div class="stat-box"><span class="stat-label">AHORRO TURBO</span><span class="stat-value" id="turbo-display">--</span><span class="stat-turbo">LZ4 ACTIVO</span></div>
             </div>
+            <div style="padding:0 10px 10px 10px; background:#0b0d10;">
+                <canvas id="net-canvas" width="200" height="40"></canvas>
+            </div>
         </div>
     </div>
     <div class="hidden"><input id="ip-virtual"><input id="puerto-local" value="5000"><input id="my-version" value="v1.0"></div>
@@ -76,12 +84,18 @@
         const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
         function playSound(t){if(audioCtx.state==='suspended')audioCtx.resume();const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);if(t==='msg'){o.type='sine';o.frequency.setValueAtTime(800,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(400,audioCtx.currentTime+0.1);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);o.start();o.stop(audioCtx.currentTime+0.1);}else if(t==='join'){o.type='triangle';o.frequency.setValueAtTime(440,audioCtx.currentTime);o.frequency.linearRampToValueAtTime(880,audioCtx.currentTime+0.2);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.3);o.start();o.stop(audioCtx.currentTime+0.3);}}
 
-        // --- INIT ---
+        // --- INIT & PERSISTENCIA ---
         let myId=localStorage.getItem('mimic_id');if(!myId){myId='M-'+Math.random().toString(36).substr(2,6).toUpperCase();localStorage.setItem('mimic_id',myId);}
         document.getElementById('my-id-display').textContent=myId;
         const myAutoIp=(()=>{let h=0;for(let i=0;i<myId.length;i++)h=myId.charCodeAt(i)+((h<<5)-h);return`10.10.10.${(Math.abs(h)%253)+2}`;})();
         document.getElementById('ip-virtual').value=myAutoIp;
-        let savedName=localStorage.getItem('mimic_name')||"Jugador";document.getElementById('my-name').value=savedName;document.getElementById('ui-name-display').textContent=savedName;document.getElementById('ui-avatar').textContent=savedName.charAt(0).toUpperCase();
+        
+        let savedName=localStorage.getItem('mimic_name')||"Jugador"; document.getElementById('my-name').value=savedName;
+        document.getElementById('ui-name-display').textContent=savedName; document.getElementById('ui-avatar').textContent=savedName.charAt(0).toUpperCase();
+        
+        // Recuperar última sala usada
+        document.getElementById('host-password').value = localStorage.getItem('mimic_last_pwd') || "";
+        
         document.getElementById('my-name').addEventListener('input',(e)=>{localStorage.setItem('mimic_name',e.target.value);document.getElementById('ui-name-display').textContent=e.target.value;document.getElementById('ui-avatar').textContent=e.target.value.charAt(0).toUpperCase();if(ws&&ws.readyState===1)sendLogin();});
         let friends=JSON.parse(localStorage.getItem('mimic_friends'))||[];
         window.addFriend=()=>{const c=document.getElementById('friend-code-input').value.trim().toUpperCase();if(!c||c===myId||friends.some(f=>f.id===c))return;friends.push({id:c,name:`Amigo ${c}`});localStorage.setItem('mimic_friends',JSON.stringify(friends));renderFriends([]);document.getElementById('friend-code-input').value="";};
@@ -90,30 +104,16 @@
         
         // --- LOGICA HÍBRIDA + STUN ---
         async function getMyLocalIp() { try { myLocalIp = await invoke("obtener_ip_local_cmd"); console.log("Mi Local IP:", myLocalIp); } catch(e){} }
-
-        // STUN LISTENER
-        listen('stun-result', (event) => {
-            const [ip, port] = event.payload;
-            console.log("STUN Detectado:", ip, port);
-            myStunPort = port; 
-            myPublicIp = ip; 
-            showToast(`NAT Abierta (Puerto ${port})`, "info");
-        });
+        listen('stun-result', (event) => { const [ip, port] = event.payload; console.log("STUN:", ip, port); myStunPort = port; myPublicIp = ip; showToast(`NAT Abierta (Puerto ${port})`, "info"); });
 
         async function connectToBestRoute(msg) {
-            let wanPort = msg.peer_port; 
-            await invoke("agregar_peer", { ipDestino: msg.peer_ip + ":" + wanPort, ipVirtual: msg.peer_virtual_ip });
-            
+            let wanPort = msg.peer_port; await invoke("agregar_peer", { ipDestino: msg.peer_ip + ":" + wanPort, ipVirtual: msg.peer_virtual_ip });
             let routeType = "WAN 🌍";
-            
             if (msg.peer_local_ip && msg.peer_local_ip !== "127.0.0.1") {
                 await invoke("agregar_peer", { ipDestino: msg.peer_local_ip + ":" + document.getElementById('puerto-local').value, ipVirtual: msg.peer_virtual_ip });
-                if (myLocalIp.split('.')[0] === msg.peer_local_ip.split('.')[0] && myLocalIp.split('.')[1] === msg.peer_local_ip.split('.')[1]) {
-                     routeType = "LAN 🏠";
-                }
+                if (myLocalIp.split('.')[0] === msg.peer_local_ip.split('.')[0] && myLocalIp.split('.')[1] === msg.peer_local_ip.split('.')[1]) { routeType = "LAN 🏠"; }
             }
-            document.getElementById('route-type').textContent = routeType;
-            document.getElementById('route-type').style.color = routeType.includes("LAN") ? "#a4d007" : "#06b6d4";
+            document.getElementById('route-type').textContent = routeType; document.getElementById('route-type').style.color = routeType.includes("LAN") ? "#a4d007" : "#06b6d4";
         }
 
         window.sendFile=async(ip)=>{if(ip==="Offline")return;try{showToast("Selecciona archivo...","info");const r=await invoke("enviar_archivo",{ipDestino:ip});if(r.includes("Enviando"))showToast("📤 Enviando...","info");}catch(e){}};
@@ -127,8 +127,7 @@
                 vpnStarted = true;
                 const turbo = document.getElementById('turbo-icon'); turbo.style.display="inline"; turbo.style.color="#a4d007"; turbo.style.textShadow="0 0 5px #a4d007";
                 document.getElementById('log-text').textContent = `Seguro (${myAutoIp})`; document.getElementById('log-text').style.color="#a4d007";
-                checkNat();
-                showToast("💡 Consejo: Puedes cerrar la ventana, la VPN seguirá activa.", "info");
+                checkNat(); showToast("💡 Consejo: Puedes cerrar la ventana, la VPN seguirá activa.", "info");
             } catch(e) { console.error(e); }
         }
         async function checkNat() {
@@ -137,34 +136,40 @@
             if(r.includes("ÉXITO")){s.textContent="NAT: ABIERTA";s.style.color="#a4d007";}else{s.textContent="NAT: MODERADA";s.style.color="#f97316";}
             }catch(e){s.textContent="NAT: ESTRICTA";s.style.color="#ef4444";}
         }
+        window.fixNetwork = async () => { showToast("🔧 Ajustando prioridades...", "info"); try { const r = await invoke("forzar_prioridad"); showToast(r, "success"); playSound('join'); } catch(e) { showToast("Error", "error"); } };
 
-        // --- FUNCIÓN DE REPARACIÓN (PARA BOTÓN) ---
-        window.fixNetwork = async () => {
-            showToast("🔧 Ajustando prioridades de Windows...", "info");
-            try {
-                const res = await invoke("forzar_prioridad");
-                showToast(res, "success");
-                playSound('join');
-            } catch(e) { showToast("Error al reparar", "error"); }
-        };
-
-        // --- TELEMETRÍA ---
+        // --- NET GRAPH & TELEMETRY ---
         let bin=0,bout=0,lc=Date.now();
-        listen('stats-entrada',(e)=>{const[n,g]=e.payload;bin+=n;bout+=g;animateLed();});
-        listen('stats-salida',()=>{animateLed();});
+        // Variables para el gráfico
+        const canvas = document.getElementById('net-canvas'); const ctx = canvas.getContext('2d');
+        let trafficHistory = new Array(50).fill(0); // Últimos 50 puntos
+        
+        function drawGraph() {
+            ctx.clearRect(0,0,canvas.width,canvas.height);
+            ctx.beginPath(); ctx.moveTo(0, canvas.height);
+            for(let i=0; i<trafficHistory.length; i++) {
+                const val = trafficHistory[i];
+                const h = (val / 1024) * 2; // Escala simple
+                const x = (i / trafficHistory.length) * canvas.width;
+                const y = canvas.height - Math.min(h, canvas.height);
+                ctx.lineTo(x, y);
+            }
+            ctx.strokeStyle = '#a4d007'; ctx.lineWidth = 2; ctx.stroke();
+        }
+
+        listen('stats-entrada',(e)=>{const[n,g]=e.payload;bin+=n;bout+=g;animateLed(); trafficHistory.push(n); trafficHistory.shift(); drawGraph(); });
+        listen('stats-salida',(e)=>{const n = e.payload; animateLed(); trafficHistory.push(n); trafficHistory.shift(); drawGraph(); });
+        
         let lastPing = Date.now();
         listen('evento-ping', ()=>{
-            let now = Date.now();
-            let ms = now - lastPing; 
-            document.getElementById('ping-display').textContent = "< 5 ms"; 
-            lastPing = now;
+            let now = Date.now(); let ms = now - lastPing; document.getElementById('ping-display').textContent = "< 5 ms"; lastPing = now;
             document.getElementById('ping-dot').style.background="#a4d007"; document.getElementById('ping-dot').style.boxShadow="0 0 8px #a4d007";
             setTimeout(()=>document.getElementById('ping-dot').style.boxShadow="none",200);
         });
         setInterval(()=>{const n=Date.now(),d=(n-lc)/1000;lc=n;if(bout>0){const s=(bout/1024)/d;const sa=100-((bin/bout)*100);document.getElementById('speed-display').textContent=s.toFixed(1)+" KB/s";document.getElementById('turbo-display').textContent=(sa>0?sa.toFixed(0):"0")+"%";document.getElementById('turbo-display').style.color="#a4d007";bin=0;bout=0;}else{document.getElementById('speed-display').textContent="0 KB/s";}},1000);
         function animateLed(){const l=document.getElementById('traffic-led');l.style.background="#a4d007";setTimeout(()=>{l.style.background="#333";},50);}
 
-        // --- AUTO-DETECCION DE JUEGOS ---
+        // --- AUTO-JUEGO ---
         setInterval(async () => {
             if (document.activeElement === document.getElementById('my-game')) return;
             try {
@@ -173,16 +178,7 @@
                     const currentVal = document.getElementById('my-game').value;
                     if (currentVal !== gameDetected) {
                         document.getElementById('my-game').value = gameDetected;
-                        if (ws && ws.readyState === 1 && savedName) {
-                            ws.send(JSON.stringify({
-                                type: 'LOGIN',
-                                id: myId,
-                                name: savedName,
-                                virtualIp: myAutoIp,
-                                localIp: myLocalIp,
-                                game: gameDetected
-                            }));
-                        }
+                        if (ws && ws.readyState === 1 && savedName) { ws.send(JSON.stringify({type: 'LOGIN', id: myId, name: savedName, virtualIp: myAutoIp, localIp: myLocalIp, game: gameDetected})); }
                         showToast(`🎮 Detectado: ${gameDetected}`, "info");
                     }
                 }
@@ -192,19 +188,14 @@
         // --- WEBSOCKET ---
         function connect() {
             document.getElementById('server-status').textContent="Conectando..."; ws=new WebSocket(SERVER_URL);
-            ws.onopen=async ()=>{
-                document.getElementById('server-status').textContent="EN LÍNEA";document.getElementById('server-status').style.color="#a4d007";
-                await getMyLocalIp(); 
-                sendLogin();
-            };
+            ws.onopen=async ()=>{ document.getElementById('server-status').textContent="EN LÍNEA";document.getElementById('server-status').style.color="#a4d007"; await getMyLocalIp(); sendLogin(); };
             ws.onmessage=async(e)=>{
                 const msg=JSON.parse(e.data);
                 if(msg.type==='STATE_UPDATE'){renderLobbies(msg.lobbies);renderFriends(msg.players);}
                 if(msg.type==='ERROR'){showToast(msg.message,'error');}
                 if(msg.type==='MATCH'){
                     const sharedSecret = await invoke("calcular_secreto", { miPrivada: myPrivateKey, suPublica: msg.peer_public_key });
-                    await startVpnEngine(sharedSecret);
-                    await connectToBestRoute(msg);
+                    await startVpnEngine(sharedSecret); await connectToBestRoute(msg);
                     enableChat(); playSound('join'); showToast("Túnel Seguro Activo","info");
                 }
                 if(msg.type==='CHAT_MSG'){addChatMessage(msg.sender,msg.text);if(document.hidden)playSound('msg');}
@@ -215,13 +206,15 @@
 
         document.getElementById('btn-host').addEventListener('click',async()=>{
             const code=Math.random().toString(36).substring(7); const pwd=document.getElementById('host-password').value.trim();
+            localStorage.setItem('mimic_last_pwd', pwd); // Guardar pass
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; document.getElementById('host-password').disabled=true; enableChat();
+            copyToClipboard(code, "Código de Sala Copiado"); // Auto-Copy
         });
         window.join=async(code,hasPwd)=>{
-            let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:");if(pwd===null)return;}
+            let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:") || ""; if(hasPwd && !pwd)return;} // Fix prompt cancel
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'JOIN',room:code,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
