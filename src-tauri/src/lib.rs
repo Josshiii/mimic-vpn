@@ -11,7 +11,6 @@ use std::io::{Read, Write, Cursor};
 use std::path::{Path, PathBuf};
 use byteorder::{BigEndian, ReadBytesExt}; 
 
-// DEPENDENCIAS
 use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -38,25 +37,18 @@ static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
-// --- SEGURIDAD: MIMIC SHIELD ---
 fn es_paquete_seguro(packet: &[u8]) -> bool {
     if packet.len() < 20 { return false; }
     let protocol = packet[9];
-    // Permitir IGMP (2) para Multicast real
     if protocol != 6 && protocol != 17 && protocol != 1 && protocol != 2 { return false; }
-    
-    if protocol == 6 || protocol == 17 { // TCP o UDP
+    if protocol == 6 || protocol == 17 { 
         if packet.len() < 24 { return false; } 
         let dest_port = ((packet[22] as u16) << 8) | (packet[23] as u16);
-        match dest_port {
-            135 | 137 | 138 | 139 | 445 | 3389 | 5900 | 23 | 21 => return false, 
-            _ => {} 
-        }
+        match dest_port { 135 | 137 | 138 | 139 | 445 | 3389 | 5900 | 23 | 21 => return false, _ => {} }
     }
     true
 }
 
-// --- DISCORD ---
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -77,28 +69,27 @@ fn actualizar_discord(estado: &str, detalles: &str) {
     }
 }
 
-// --- OPTIMIZACIÓN NUCLEAR DE WINDOWS ---
+// --- OPTIMIZACIÓN NUCLEAR MEJORADA (MTU FIX) ---
 fn optimizar_windows_nuclear(puerto_udp: &str) { 
-    // 1. Prioridad Máxima a la Interfaz
+    // 1. AJUSTE DE MTU CRÍTICO: 
+    // Bajamos a 1350 para dejar espacio a nuestras cabeceras sin fragmentar en el router
+    let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
+
+    // 2. Prioridad y Perfil
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
     
-    // 2. Permitir todo el tráfico en la VPN (Shield lo filtra antes, así que es seguro abrir el firewall aquí)
+    // 3. Firewall y Rutas
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // 3. SECUESTRO DE MULTICAST (CRÍTICO PARA MINECRAFT)
-    // Forzamos a Windows a enviar los paquetes 224.0.0.0 por nuestra interfaz
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
-
-    // 4. Abrir puerto UDP local
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
 }
 
 #[tauri::command]
-fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Conectividad Reparada (Multicast OK)".to_string() }
+fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Red Optimizada (MTU 1350)".to_string() }
 
-// --- FUNCIONES CORE ---
+// ... (Detección de juegos, STUN, llaves, igual que antes) ...
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all(); s.refresh_all(); 
@@ -112,7 +103,6 @@ fn detectar_juego() -> String {
     }
     "".to_string()
 }
-
 fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
     if response.len() < 20 { return None; }
     if response[0] != 0x01 || response[1] != 0x01 { return None; }
@@ -133,7 +123,6 @@ fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
     }
     None
 }
-
 fn realizar_consulta_stun(socket: &UdpSocket) -> Option<(String, u16)> {
     let mut packet = vec![0u8; 20];
     packet[0] = 0x00; packet[1] = 0x01; packet[2] = 0x00; packet[3] = 0x00; 
@@ -150,14 +139,12 @@ fn realizar_consulta_stun(socket: &UdpSocket) -> Option<(String, u16)> {
     socket.set_read_timeout(None).ok();
     None
 }
-
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
     let mut secret_bytes = [0u8; 32]; rand::thread_rng().fill_bytes(&mut secret_bytes);
     let secret = StaticSecret::from(secret_bytes); let public = PublicKey::from(&secret);
     (general_purpose::STANDARD.encode(secret.to_bytes()), general_purpose::STANDARD.encode(public.to_bytes()))
 }
-
 #[tauri::command]
 fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     let priv_bytes = general_purpose::STANDARD.decode(mi_privada).unwrap_or(vec![0; 32]);
@@ -168,36 +155,26 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     let shared_secret = mis_secretos.diffie_hellman(&sus_publicos);
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
-
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
-
-// --- MOTOR DE ENVÍO DE PAQUETES ---
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
         let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
-        
         if let Some(relay_ip) = relay_target {
-            // Modo Relay
             if let Ok(ip_addr) = destino.parse::<Ipv4Addr>() {
                 let mut relay_packet = ip_addr.octets().to_vec(); relay_packet.extend_from_slice(&final_packet);
                 let _ = socket.send_to(&relay_packet, relay_ip);
             }
-        } else {
-            // Modo Directo
-            let _ = socket.send_to(&final_packet, destino);
-        }
+        } else { let _ = socket.send_to(&final_packet, destino); }
     }
 }
-
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string(); let ext = ruta.extension().unwrap_or_default().to_string_lossy().to_string(); let parent = ruta.parent().unwrap().to_path_buf();
     let mut i = 1; loop { let name = if ext.is_empty() { format!("{} ({})", stem, i) } else { format!("{} ({}).{}", stem, i, ext) }; let new_path = parent.join(name); if !new_path.exists() { return new_path; } i += 1; }
 }
-
 fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         if let Ok(listener) = TcpListener::bind(format!("0.0.0.0:{}", FILE_PORT)) {
@@ -228,7 +205,6 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
         }
     });
 }
-
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -239,13 +215,11 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
                 packet_count += 1;
                 if packet_count > 5000 { if last_second.elapsed().as_secs() < 1 { continue; } else { packet_count = 0; last_second = Instant::now(); } }
                 if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
-                
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         if let Ok(original) = decompress_size_prepended(&decrypted) {
                             if !es_paquete_seguro(&original) { continue; }
-                            
                             if original == HEARTBEAT_MSG { let _ = app_handle.emit("evento-ping", ()); } 
                             else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original.len() as u16) {
@@ -260,7 +234,6 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         }
     });
 }
-
 fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
@@ -328,7 +301,7 @@ fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
     "MODO RELAY ACTIVADO 🛡️".to_string()
 }
 
-// --- VPN ENGINE PRINCIPAL (CON REPETIDOR DE BROADCAST) ---
+// --- MOTOR CON PROTECCIÓN DE LOOPBACK Y MTU FIX ---
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -340,9 +313,11 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let adapter = wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None).unwrap();
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
-    optimizar_windows_nuclear(&puerto_local);
-    iniciar_receptor_archivos(app_handle.clone());
     
+    // EJECUTAR OPTIMIZACIÓN CON MTU FIX
+    optimizar_windows_nuclear(&puerto_local);
+    
+    iniciar_receptor_archivos(app_handle.clone());
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
     if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) { let _ = app_handle.emit("stun-result", (public_ip, public_port)); }
     if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
@@ -357,8 +332,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
-                    
-                    // QoS (Prioridad TCP)
                     if bytes.len() > 20 {
                         let protocol = bytes[9];
                         if protocol == 6 { 
@@ -366,33 +339,25 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                             last_tcp_packet = Instant::now();
                         }
                     }
-
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
-                        
-                        // --- AQUÍ ESTÁ LA MAGIA DEL REPETIDOR ---
-                        // Detectamos si es Broadcast (255.255.255.255) o Multicast (224.x.x.x)
-                        let first_byte = bytes[16];
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
+                        let first_byte = bytes[16];
                         let is_multicast = first_byte >= 224 && first_byte <= 239;
 
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
-                                    // ¡BINGO! Es Minecraft buscando partida.
-                                    // ENVIAMOS COPIA A TODOS LOS AMIGOS (FLOOD)
-                                    for t in table.values() { 
-                                        enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); 
-                                    } 
+                                    // --- REPETIDOR INTELIGENTE (SIN ECO) ---
+                                    for (virtual_ip, real_endpoint) in table.iter() {
+                                        // No enviamos el paquete a nosotros mismos (aunque la tabla no debería tenernos)
+                                        if *virtual_ip != ip_virtual {
+                                            enviar_paquete_turbo(&socket_out, real_endpoint, bytes, &cipher_out); 
+                                        }
+                                    }
                                 } else { 
-                                    // Tráfico normal (Unicast)
-                                    if let Some(t) = table.get(&dest_ip) { 
-                                        enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); 
-                                    } else { 
-                                        // Fallback por si acaso: si no lo encontramos, lo enviamos a todos
-                                        // Esto ayuda si la tabla de enrutamiento tiene errores
-                                        for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
-                                    } 
+                                    if let Some(t) = table.get(&dest_ip) { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
+                                    else { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } 
                                 }
                                 if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
@@ -409,7 +374,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN UNIVERSAL (BROADCAST + RELAY) ACTIVA".to_string()
+    "VPN UNIVERSAL OPTIMIZADA".to_string()
 }
 
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
