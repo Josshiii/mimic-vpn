@@ -1,39 +1,37 @@
 [package]
 name = "mimic-app"
-version = "1.0.0"
-description = "Mimic Link VPN"
+version = "0.1.0"
+description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [build-dependencies]
-tauri-build = { version = "2.0", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# --- CAMBIO IMPORTANTE AQUÍ ABAJO ---
-# Activamos "tray-icon" (Bandeja) y "image-png" (Iconos) para el Modo Fantasma
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
-
+tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-byteorder = "1.5"
-
-sysinfo = "0.30"
-
-discord-rich-presence = "0.2"
-
-# RED Y VPN
-wintun = "0.4"
-igd-next = "0.14"
-
-# SEGURIDAD Y COMPRESIÓN
+# --- DEPENDENCIAS DE MIMIC HUB ---
+# Red y VPN
+socket2 = "0.5"
+wintun = "0.3" 
+x25519-dalek = "2.0"
 chacha20poly1305 = "0.10"
 rand = "0.8"
 base64 = "0.21"
 lz4_flex = "0.11"
-x25519-dalek = { version = "2.0", features = ["static_secrets", "getrandom"] }
+igd-next = "0.14" # UPnP
+byteorder = "1.5"
 
-# ARCHIVOS
-rfd = "0.14"
-dirs = "5.0"
+# Sistema y Procesos
+sysinfo = "0.30" # Detección de Juegos
+discord-rich-presence = "0.2" # Estado de Discord
+
+# --- EL NUEVO PLUGIN QUE FALTABA ---
+tauri-plugin-updater = "2" # <--- ESTO ARREGLA EL ERROR
+tauri-plugin-process = "2"
