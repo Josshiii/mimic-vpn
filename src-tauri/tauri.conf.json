@@ -37,11 +37,12 @@
     "resources": [
       "wintun.dll"
     ],
-    "windows": {
-      "protocol": {
-        "schemes": ["mimic"]
+    "deepLinkProtocols": [
+      {
+        "schemes": ["mimic"],
+        "name": "Mimic Hub Protocol"
       }
-    }
+    ]
   },
   "plugins": {
     "updater": {
