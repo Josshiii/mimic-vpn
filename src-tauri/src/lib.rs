@@ -37,7 +37,43 @@ static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
-// --- UTILIDADES BÁSICAS ---
+// --- MIMIC SHIELD: FILTRO DE SEGURIDAD ---
+// Retorna TRUE si el paquete es seguro, FALSE si es malicioso
+fn es_paquete_seguro(packet: &[u8]) -> bool {
+    // 1. Verificación básica de longitud IPv4 (Header mínimo 20 bytes)
+    if packet.len() < 20 { return false; }
+
+    // 2. Extraer Protocolo (Byte 9)
+    let protocol = packet[9];
+    
+    // Si no es TCP (6) ni UDP (17) ni ICMP (1), bloquear (pueden ser protocolos raros de ataque)
+    if protocol != 6 && protocol != 17 && protocol != 1 { return false; }
+
+    // Si es TCP o UDP, verificar puertos
+    if protocol == 6 || protocol == 17 {
+        if packet.len() < 24 { return false; } // Header IP (20) + Puertos (4)
+        
+        // Los puertos están en los bytes 20-21 (Origen) y 22-23 (Destino)
+        let _src_port = ((packet[20] as u16) << 8) | (packet[21] as u16);
+        let dest_port = ((packet[22] as u16) << 8) | (packet[23] as u16);
+
+        // --- BLACKLIST DE PUERTOS PELIGROSOS ---
+        // Estos puertos son usados por hackers para atacar Windows
+        match dest_port {
+            135 => return false, // RPC (Remote Procedure Call) - Muy peligroso
+            137 | 138 | 139 => return false, // NetBIOS - Información del sistema
+            445 => return false, // SMB - Carpetas Compartidas (WannaCry usaba este)
+            3389 => return false, // RDP - Escritorio Remoto
+            5900 => return false, // VNC
+            23 => return false, // Telnet
+            21 => return false, // FTP
+            _ => {} // El resto (juegos) pasa
+        }
+    }
+    true
+}
+
+// ... (Resto de utilidades: conectar_discord, detectar_juego, etc. IGUALES) ...
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -57,34 +93,15 @@ fn actualizar_discord(estado: &str, detalles: &str) {
         }
     }
 }
-
-// --- LA SOLUCIÓN NUCLEAR (OPTIMIZACIÓN AGRESIVA) ---
 fn optimizar_windows_nuclear(puerto_udp: &str) { 
-    // 1. Prioridad Absoluta (Métrica 1)
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // 2. Perfil Privado (Evita bloqueos de Firewall "Público")
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-
-    // 3. REGLA DE ORO: Permitir TODO el tráfico entrante en la interfaz VPN
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-
-    // 4. SECUESTRO DE MULTICAST (Para que Minecraft vea la LAN)
-    // Añadimos la ruta 224.0.0.0/4 apuntando a la interfaz de la VPN
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // 5. Abrir puerto UDP local
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
 }
-
 #[tauri::command]
-fn forzar_prioridad() -> String {
-    // Re-ejecutamos la optimización nuclear bajo demanda
-    optimizar_windows_nuclear("0"); // Puerto 0 porque solo queremos las reglas generales
-    "🚀 Tráfico de Juegos Forzado por VPN".to_string()
-}
-
-// ... (Resto de funciones: detectar_juego, parse_stun, etc. IGUALES) ...
+fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Tráfico de Juegos Forzado".to_string() }
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all(); s.refresh_all(); 
@@ -98,7 +115,6 @@ fn detectar_juego() -> String {
     }
     "".to_string()
 }
-
 fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
     if response.len() < 20 { return None; }
     if response[0] != 0x01 || response[1] != 0x01 { return None; }
@@ -152,36 +168,24 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
-
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
         let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
-        
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
         if let Some(relay_ip) = relay_target {
             if let Ok(ip_addr) = destino.parse::<Ipv4Addr>() {
-                let mut relay_packet = ip_addr.octets().to_vec();
-                relay_packet.extend_from_slice(&final_packet);
+                let mut relay_packet = ip_addr.octets().to_vec(); relay_packet.extend_from_slice(&final_packet);
                 let _ = socket.send_to(&relay_packet, relay_ip);
             }
-        } else {
-            let _ = socket.send_to(&final_packet, destino);
-        }
+        } else { let _ = socket.send_to(&final_packet, destino); }
     }
 }
-
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
-    let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
-    let ext = ruta.extension().unwrap_or_default().to_string_lossy().to_string();
-    let parent = ruta.parent().unwrap().to_path_buf();
-    let mut i = 1;
-    loop {
-        let name = if ext.is_empty() { format!("{} ({})", stem, i) } else { format!("{} ({}).{}", stem, i, ext) };
-        let new_path = parent.join(name); if !new_path.exists() { return new_path; } i += 1;
-    }
+    let stem = ruta.file_stem().unwrap().to_string_lossy().to_string(); let ext = ruta.extension().unwrap_or_default().to_string_lossy().to_string(); let parent = ruta.parent().unwrap().to_path_buf();
+    let mut i = 1; loop { let name = if ext.is_empty() { format!("{} ({})", stem, i) } else { format!("{} ({}).{}", stem, i, ext) }; let new_path = parent.join(name); if !new_path.exists() { return new_path; } i += 1; }
 }
 fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
@@ -190,23 +194,17 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
                 if let Ok(mut socket) = stream {
                     let handle = app_handle.clone();
                     thread::spawn(move || {
-                        let mut header_buf = [0u8; 8];
-                        if socket.read_exact(&mut header_buf).is_err() || &header_buf != MAGIC_HEADER { return; }
-                        let mut name_len_buf = [0u8; 1];
-                        if socket.read_exact(&mut name_len_buf).is_ok() {
+                        let mut header_buf = [0u8; 8]; if socket.read_exact(&mut header_buf).is_err() || &header_buf != MAGIC_HEADER { return; }
+                        let mut name_len_buf = [0u8; 1]; if socket.read_exact(&mut name_len_buf).is_ok() {
                             let name_len = name_len_buf[0] as usize; let mut name_buf = vec![0u8; name_len];
                             if socket.read_exact(&mut name_buf).is_ok() {
                                 if let Ok(raw_filename) = String::from_utf8(name_buf) {
                                     if let Some(mut download_path) = dirs::download_dir() {
-                                        let safe_name = Path::new(&raw_filename).file_name().unwrap_or_default();
-                                        download_path.push(safe_name);
-                                        let final_path = obtener_ruta_unica(download_path);
+                                        let safe_name = Path::new(&raw_filename).file_name().unwrap_or_default(); download_path.push(safe_name); let final_path = obtener_ruta_unica(download_path);
                                         let display_name = final_path.file_name().unwrap().to_string_lossy().to_string();
                                         if let Ok(mut file) = File::create(final_path) {
                                             let mut buffer = [0u8; 8192]; let mut received_bytes = 0;
-                                            while let Ok(n) = socket.read(&mut buffer) {
-                                                if n == 0 { break; } let _ = file.write_all(&buffer[..n]); received_bytes += n;
-                                            }
+                                            while let Ok(n) = socket.read(&mut buffer) { if n == 0 { break; } let _ = file.write_all(&buffer[..n]); received_bytes += n; }
                                             let _ = handle.emit("archivo-recibido", format!("{} ({:.2} MB)", display_name, received_bytes as f64 / 1024.0 / 1024.0));
                                         }
                                     }
@@ -219,16 +217,42 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
         }
     });
 }
+
+// --- ENGINE CON SHIELD (FIREWALL ACTIVO) ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
+        
+        // ANTI-FLOOD (Rate Limiting)
+        let mut packet_count = 0;
+        let mut last_second = Instant::now();
+
         loop {
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
+                // 1. CONTROL DE INUNDACIÓN (DDoS protection)
+                packet_count += 1;
+                if packet_count > 5000 { // Si recibimos más de 5000 paquetes/segundo
+                    if last_second.elapsed().as_secs() < 1 {
+                        continue; // DROP (Ignorar paquetes extra)
+                    } else {
+                        packet_count = 0;
+                        last_second = Instant::now();
+                    }
+                }
+
                 if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
+                
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         if let Ok(original) = decompress_size_prepended(&decrypted) {
+                            
+                            // 2. MIMIC SHIELD: Inspección de Paquetes
+                            if !es_paquete_seguro(&original) {
+                                // println!("🛡️ Paquete malicioso bloqueado");
+                                continue; // DROP (A la basura)
+                            }
+
                             if original == HEARTBEAT_MSG { let _ = app_handle.emit("evento-ping", ()); } 
                             else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original.len() as u16) {
@@ -243,10 +267,9 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         }
     });
 }
-fn obtener_ip_local() -> Option<Ipv4Addr> {
-    let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; 
-    if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
-}
+
+// ... (Resto de funciones: obtener_ip_local, obtener_ip_local_cmd, enviar_archivo, etc. SIN CAMBIOS) ...
+fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
 #[tauri::command]
@@ -260,12 +283,7 @@ fn enviar_archivo(ip_destino: String) -> String {
                     let _ = socket.write_all(MAGIC_HEADER);
                     if let Some(filename) = path_clone.file_name() {
                         if let Some(name_str) = filename.to_str() {
-                            let name_bytes = name_str.as_bytes();
-                            if name_bytes.len() < 255 {
-                                let _ = socket.write_all(&[name_bytes.len() as u8]); let _ = socket.write_all(name_bytes); 
-                                let mut buffer = [0u8; 8192];
-                                while let Ok(n) = file.read(&mut buffer) { if n == 0 { break; } let _ = socket.write_all(&buffer[..n]); }
-                            }
+                            let name_bytes = name_str.as_bytes(); if name_bytes.len() < 255 { let _ = socket.write_all(&[name_bytes.len() as u8]); let _ = socket.write_all(name_bytes); let mut buffer = [0u8; 8192]; while let Ok(n) = file.read(&mut buffer) { if n == 0 { break; } let _ = socket.write_all(&buffer[..n]); } }
                         }
                     }
                 }
@@ -291,11 +309,8 @@ fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
             table.insert(ip_virtual, ip_destino.clone()); 
             if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
                 if let Some(socket) = socket_guard.as_ref() {
-                    let target = ip_destino.clone();
-                    let s_clone = socket.try_clone().unwrap();
-                    thread::spawn(move || {
-                        for _ in 0..5 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(100)); }
-                    });
+                    let target = ip_destino.clone(); let s_clone = socket.try_clone().unwrap();
+                    thread::spawn(move || { for _ in 0..5 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(100)); } });
                 }
             }
             return "OK".to_string(); 
@@ -314,24 +329,17 @@ fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
             let s_clone = socket.try_clone().unwrap(); let target = server_ip.clone();
             if let Ok(ip_addr) = mi_ip_virtual.parse::<Ipv4Addr>() {
                 let mut reg_packet = vec![0xFF]; reg_packet.extend_from_slice(&ip_addr.octets());
-                thread::spawn(move || {
-                    loop {
-                        let _ = s_clone.send_to(&reg_packet, &target); thread::sleep(Duration::from_secs(15));
-                        if RELAY_ADDRESS.lock().unwrap().is_none() { break; }
-                    }
-                });
+                thread::spawn(move || { loop { let _ = s_clone.send_to(&reg_packet, &target); thread::sleep(Duration::from_secs(15)); if RELAY_ADDRESS.lock().unwrap().is_none() { break; } } });
             }
         }
     }
     "MODO RELAY ACTIVADO 🛡️".to_string()
 }
 
-// --- ENGINE PRINCIPAL ---
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
-    actualizar_discord("Conectado a Mimic Hub", "Esperando Paquetes..."); 
-    
+    actualizar_discord("Conectado a Mimic Hub", "Modo Seguro Activo 🛡️"); 
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave mal".to_string() };
     if key_bytes.len() != 32 { return "Longitud mal".to_string(); }
     let key = Key::from_slice(&key_bytes); let cipher = Arc::new(ChaCha20Poly1305::new(key));
@@ -339,16 +347,11 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let adapter = wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None).unwrap();
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // --- EJECUTAMOS OPTIMIZACIÓN NUCLEAR AUTOMÁTICAMENTE ---
     optimizar_windows_nuclear(&puerto_local);
-    
     iniciar_receptor_archivos(app_handle.clone());
     
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
-    if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) {
-        let _ = app_handle.emit("stun-result", (public_ip, public_port));
-    }
+    if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) { let _ = app_handle.emit("stun-result", (public_ip, public_port)); }
     if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
 
     let session_arc = Arc::new(session);
@@ -396,7 +399,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN NUCLEAR ACTIVA ☢️".to_string()
+    "VPN BLINDADA ACTIVA".to_string()
 }
 
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
