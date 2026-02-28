@@ -3,7 +3,6 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
-// AÑADIDO: Listener para que funcione app.listen
 use tauri::{Emitter, Listener, Manager}; 
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
@@ -38,11 +37,7 @@ static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
-
-// MEMORIA GLOBAL (Lazy Static corregido)
-lazy_static::lazy_static! { 
-    static ref PEER_LAST_SEEN: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new()); 
-}
+lazy_static::lazy_static! { static ref PEER_LAST_SEEN: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new()); }
 
 fn es_paquete_seguro(packet: &[u8]) -> bool {
     if packet.len() < 20 { return false; }
@@ -56,25 +51,16 @@ fn es_paquete_seguro(packet: &[u8]) -> bool {
     true
 }
 
+// ... (Funciones de Discord y Smart Routing IGUALES QUE ANTES) ...
 fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, ip_real_destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
-    
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
         let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
-        
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
-        
-        // CORRECCIÓN: Acceso seguro a PEER_LAST_SEEN
-        let ultima_vez = { 
-            let guard = PEER_LAST_SEEN.lock().unwrap();
-            guard.get(ip_real_destino).cloned()
-        };
-        
+        let ultima_vez = { let guard = PEER_LAST_SEEN.lock().unwrap(); guard.get(ip_real_destino).cloned() };
         let p2p_activo = match ultima_vez { Some(t) => t.elapsed().as_secs() < 8, None => false };
-        
         if p2p_activo || relay_target.is_none() { let _ = socket.send_to(&final_packet, ip_real_destino); }
-        
         if !p2p_activo && relay_target.is_some() {
             let relay_ip = relay_target.unwrap();
             if let Ok(ip_addr) = ip_virtual_destino.parse::<Ipv4Addr>() {
@@ -84,8 +70,14 @@ fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, ip_real_de
         }
     }
 }
-
-// ... (Resto de funciones utilitarias IGUALES) ...
+fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
+    let compressed_data = compress_prepend_size(datos);
+    let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
+    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
+        let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
+        let _ = socket.send_to(&final_packet, destino);
+    }
+}
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -105,16 +97,44 @@ fn actualizar_discord(estado: &str, detalles: &str) {
         }
     }
 }
+
+// --- LA SOLUCIÓN AL ENEMIGO #1 (ANTIVIRUS & DEFENDER) ---
 fn optimizar_windows_nuclear(puerto_udp: &str) { 
-    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    // 1. PASAPORTE DIPLOMÁTICO: Añadir exclusión en Windows Defender
+    // Le decimos a Defender: "No escanees el proceso de Mimic, es seguro".
+    let _ = Command::new("powershell")
+        .args(&["-Command", "Add-MpPreference -ExclusionProcess 'mimic-app.exe' -ErrorAction SilentlyContinue"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+
+    // 2. MTU SEGURO (Evita fragmentación que los Firewalls odian)
+    let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
+
+    // 3. CATEGORÍA PRIVADA (Crucial para Avast/Norton)
+    // Forzamos la red a ser "Privada" para que el Firewall baje la guardia
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // 4. MÉTRICA 1 (Prioridad absoluta)
+    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+
+    // 5. REGLAS DE FIREWALL DE WINDOWS (Permisivas para la VPN)
+    // Regla global para la interfaz VPN
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // Regla para el puerto UDP local (para que entre el tráfico P2P)
+    if puerto_udp != "0" {
+        let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-Port-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
+    }
+
+    // 6. ENRUTAMIENTO MULTICAST (Minecraft Fix)
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
 }
+
 #[tauri::command]
-fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Prioridad Forzada".to_string() }
+fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Firewall y Red Optimizados".to_string() }
+
+// ... (Resto de funciones igual: detectar_juego, parse_stun, etc.) ...
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all(); s.refresh_all(); 
@@ -314,7 +334,6 @@ fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
     "MODO RELAY ACTIVADO 🛡️".to_string()
 }
 
-// --- ENGINE CON SMART ROUTING ---
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -326,9 +345,11 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let adapter = wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None).unwrap();
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
-    optimizar_windows_nuclear(&puerto_local);
-    iniciar_receptor_archivos(app_handle.clone());
     
+    // --- AQUÍ APLICAMOS LA VACUNA CONTRA EL ENEMIGO #1 ---
+    optimizar_windows_nuclear(&puerto_local);
+    
+    iniciar_receptor_archivos(app_handle.clone());
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
     if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) { let _ = app_handle.emit("stun-result", (public_ip, public_port)); }
     if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
@@ -374,7 +395,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     "VPN BLINDADA ACTIVA".to_string()
 }
 
-// --- SYSTEM TRAY ---
+// --- SETUP Y MENU ---
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -382,7 +403,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build()) 
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_deep_link::init()) // INIT DEL PLUGIN
+        .plugin(tauri_plugin_deep_link::init()) 
         .invoke_handler(tauri::generate_handler![
             iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, 
             intentar_upnp, enviar_archivo, generar_clave_segura, obtener_ip_local_cmd,
@@ -390,10 +411,7 @@ pub fn run() {
         ])
         .setup(|app| {
             conectar_discord(); 
-            // CORREGIDO: deep_link ahora se usa via app.app_handle().deep_link()
             let handle = app.handle().clone();
-            // let _ = app.deep_link().register("mimic"); (Tauri v2 beta cambia a veces, usamos listener directo)
-
             app.listen("deep-link://new-url", move |event| {
                 if let Ok(urls) = serde_json::from_str::<Vec<String>>(event.payload()) {
                     if let Some(url) = urls.first() { let _ = handle.emit("open-url", url); }
@@ -409,15 +427,4 @@ pub fn run() {
         .on_window_event(|window, event| { if let WindowEvent::CloseRequested { api, .. } = event { window.hide().unwrap(); api.prevent_close(); } })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-// Necesitamos esta función helper que faltaba
-fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
-    // Es lo mismo que smart pero forzado a directo (usado para heartbeat)
-    let compressed_data = compress_prepend_size(datos);
-    let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
-    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
-        let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
-        let _ = socket.send_to(&final_packet, destino);
-    }
 }
