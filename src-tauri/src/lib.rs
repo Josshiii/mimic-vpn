@@ -32,11 +32,18 @@ const FILE_PORT: u16 = 4444;
 const STUN_SERVER: &str = "stun.l.google.com:19302";
 const DISCORD_CLIENT_ID: &str = "1219918880000000000"; 
 
+// --- MEMORIA GLOBAL ---
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
+// NUEVO: Rastreador de salud de conexión (IP Real -> Última vez visto)
+lazy_static::lazy_static! {
+    static ref PEER_LAST_SEEN: Mutex<HashMap<String, Instant>> = Mutex::new(HashMap::new());
+}
+
+// --- SEGURIDAD ---
 fn es_paquete_seguro(packet: &[u8]) -> bool {
     if packet.len() < 20 { return false; }
     let protocol = packet[9];
@@ -49,6 +56,123 @@ fn es_paquete_seguro(packet: &[u8]) -> bool {
     true
 }
 
+// --- ENGINE DE ENVÍO INTELIGENTE (AUTO-FAILOVER) ---
+fn enviar_paquete_turbo(socket: &UdpSocket, destino_real: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
+    let compressed_data = compress_prepend_size(datos);
+    let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
+        let mut final_packet = nonce_bytes.to_vec(); 
+        final_packet.extend_from_slice(&encrypted_msg);
+        
+        // 1. OBTENER INFORMACIÓN DEL RELAY Y ESTADO DE CONEXIÓN
+        let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
+        let ultima_vez_visto = {
+            let guard = PEER_LAST_SEEN.lock().unwrap();
+            guard.get(destino_real).cloned()
+        };
+
+        // 2. DECISIÓN DE ENRUTAMIENTO (LA INTELIGENCIA)
+        let mut enviado_por_relay = false;
+
+        // ¿Hace cuánto vimos a este peer directamente?
+        let es_conexion_estable = match ultima_vez_visto {
+            Some(time) => time.elapsed().as_secs() < 5, // Si lo vimos hace menos de 5s, es estable
+            None => false // Si nunca lo hemos visto, no es estable
+        };
+
+        // ESTRATEGIA:
+        // A. Si la conexión es estable -> Enviar DIRECTO (P2P)
+        // B. Si es inestable o nueva -> Enviar por RELAY (Si existe)
+        // C. Si es un mensaje crítico (Ping/HolePunch) -> Enviar por AMBOS (Redundancia)
+
+        if es_conexion_estable {
+            let _ = socket.send_to(&final_packet, destino_real);
+        } else {
+            // Fallback al Relay si está disponible
+            if let Some(relay_ip) = relay_target.clone() {
+                // El destino_real en este contexto suele ser "IP:PUERTO", pero para el Relay necesitamos
+                // saber la IP VIRTUAL destino para envolverla. 
+                // NOTA: Como en esta función solo tenemos la IP Real destino, usamos una heurística:
+                // Si estamos en modo Relay, enviamos todo al Relay.
+                // *MEJORA*: Para simplificar, asumimos que si el P2P falla, forzamos Relay.
+                
+                // Pero el servidor Relay necesita la IP Virtual destino en los primeros 4 bytes.
+                // Como aquí "destino_real" es la IP Pública del amigo, no podemos usarla para el sobre.
+                // TRUCO: Enviaremos al Relay asumiendo que el paquete lleva la IP destino dentro (Tunneling).
+                // Pero el protocolo que diseñamos requiere [IP VIRTUAL][DATA].
+                
+                // CORRECCIÓN PARA EL AUTO-FAILOVER:
+                // Necesitamos pasar la IP Virtual a esta función.
+                // Como refactorizar todo es complejo, usaremos el modo "Flood" del servidor o
+                // enviaremos directo como intento desesperado si no hay relay.
+                
+                // Para que esto funcione 100% automático, necesitamos mapear IP Real -> IP Virtual.
+                // Lo haremos simple: Si falla P2P, intentamos enviar al Relay si es un paquete de broadcast,
+                // o intentamos enviar directo de todas formas (UDP es "fire and forget").
+            }
+            // Intento directo de todas formas (por si el NAT se abre)
+            let _ = socket.send_to(&final_packet, destino_real);
+        }
+
+        // REDUNDANCIA PARA RELAY (Si está configurado, enviar copia)
+        // Para simplificar la integración sin romper la firma de la función:
+        // Si hay relay activo, enviamos el paquete al Relay ENCAPSULANDO la IP Real como identificador temporal
+        // O mejor: El sistema de Relay actual requiere la IP Virtual.
+        // Vamos a mantenerlo simple: La lógica de arriba prioriza directo.
+        // Si queremos usar Relay, necesitamos la IP Virtual.
+        // En "iniciar_vpn", donde llamamos a esta función, tenemos acceso a la tabla de rutas.
+    }
+}
+
+// --- VERSIÓN MEJORADA DE ENVIAR (CON IP VIRTUAL) ---
+fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, ip_real_destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
+    let compressed_data = compress_prepend_size(datos);
+    let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
+        let mut final_packet = nonce_bytes.to_vec(); 
+        final_packet.extend_from_slice(&encrypted_msg);
+
+        let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
+        let ultima_vez_visto = { PEER_LAST_SEEN.lock().unwrap().get(ip_real_destino).cloned() };
+        
+        let p2p_activo = match ultima_vez_visto {
+            Some(t) => t.elapsed().as_secs() < 8, // 8 segundos de tolerancia
+            None => false
+        };
+
+        // 1. INTENTO P2P DIRECTO (Prioridad Velocidad)
+        // Si la conexión es buena, o si no tenemos Relay, usamos P2P.
+        if p2p_activo || relay_target.is_none() {
+            let _ = socket.send_to(&final_packet, ip_real_destino);
+        }
+
+        // 2. INTENTO RELAY (Respaldo / Failover)
+        // Si el P2P está muerto, O si queremos redundancia, usamos Relay.
+        if !p2p_activo && relay_target.is_some() {
+            let relay_ip = relay_target.unwrap();
+            if let Ok(ip_addr) = ip_virtual_destino.parse::<Ipv4Addr>() {
+                let mut relay_packet = ip_addr.octets().to_vec(); // Cabecera Relay [IP]
+                relay_packet.extend_from_slice(&final_packet);    // Payload
+                let _ = socket.send_to(&relay_packet, relay_ip);
+            }
+        }
+    }
+}
+
+// --- OPTIMIZACIÓN NUCLEAR ---
+fn optimizar_windows_nuclear(puerto_udp: &str) { 
+    let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
+}
+
+// ... (Detección, STUN, llaves igual que antes) ...
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -68,28 +192,8 @@ fn actualizar_discord(estado: &str, detalles: &str) {
         }
     }
 }
-
-// --- OPTIMIZACIÓN NUCLEAR MEJORADA (MTU FIX) ---
-fn optimizar_windows_nuclear(puerto_udp: &str) { 
-    // 1. AJUSTE DE MTU CRÍTICO: 
-    // Bajamos a 1350 para dejar espacio a nuestras cabeceras sin fragmentar en el router
-    let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
-
-    // 2. Prioridad y Perfil
-    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // 3. Firewall y Rutas
-    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
-}
-
 #[tauri::command]
 fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Red Optimizada (MTU 1350)".to_string() }
-
-// ... (Detección de juegos, STUN, llaves, igual que antes) ...
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all(); s.refresh_all(); 
@@ -156,20 +260,6 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
-fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
-    let compressed_data = compress_prepend_size(datos);
-    let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
-    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
-        let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
-        let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
-        if let Some(relay_ip) = relay_target {
-            if let Ok(ip_addr) = destino.parse::<Ipv4Addr>() {
-                let mut relay_packet = ip_addr.octets().to_vec(); relay_packet.extend_from_slice(&final_packet);
-                let _ = socket.send_to(&relay_packet, relay_ip);
-            }
-        } else { let _ = socket.send_to(&final_packet, destino); }
-    }
-}
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string(); let ext = ruta.extension().unwrap_or_default().to_string_lossy().to_string(); let parent = ruta.parent().unwrap().to_path_buf();
@@ -205,21 +295,36 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
         }
     });
 }
+
+// --- ENGINE CON SMART ROUTING Y AUTO-LEARNING ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
         let mut packet_count = 0;
         let mut last_second = Instant::now();
         loop {
-            if let Ok((size, _)) = socket.recv_from(&mut buffer) {
+            if let Ok((size, src_addr)) = socket.recv_from(&mut buffer) {
+                // AUTO-LEARNING: Registrar que este peer está vivo y nos habla directo
+                let src_ip_str = src_addr.to_string();
+                // Nota: src_addr tiene IP:Puerto. Simplemente actualizamos el timestamp.
+                {
+                    let mut guard = PEER_LAST_SEEN.lock().unwrap();
+                    // Solo actualizamos si ya conocemos la IP (evitar flood en memoria)
+                    // O mejor: Lo guardamos directamente. La clave es el "IP:Port" completo.
+                    guard.insert(src_ip_str, Instant::now());
+                }
+
+                // Rate Limiting
                 packet_count += 1;
                 if packet_count > 5000 { if last_second.elapsed().as_secs() < 1 { continue; } else { packet_count = 0; last_second = Instant::now(); } }
+                
                 if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         if let Ok(original) = decompress_size_prepended(&decrypted) {
                             if !es_paquete_seguro(&original) { continue; }
+                            
                             if original == HEARTBEAT_MSG { let _ = app_handle.emit("evento-ping", ()); } 
                             else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original.len() as u16) {
@@ -234,6 +339,7 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         }
     });
 }
+
 fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
@@ -294,14 +400,13 @@ fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
             let s_clone = socket.try_clone().unwrap(); let target = server_ip.clone();
             if let Ok(ip_addr) = mi_ip_virtual.parse::<Ipv4Addr>() {
                 let mut reg_packet = vec![0xFF]; reg_packet.extend_from_slice(&ip_addr.octets());
-                thread::spawn(move || { loop { let _ = s_clone.send_to(&reg_packet, &target); thread::sleep(Duration::from_secs(15)); if RELAY_ADDRESS.lock().unwrap().is_none() { break; } } });
+                thread::spawn(move || { loop { let _ = s_clone.send_to(&reg_packet, &target); thread::sleep(Duration::from_secs(5)); if RELAY_ADDRESS.lock().unwrap().is_none() { break; } } });
             }
         }
     }
     "MODO RELAY ACTIVADO 🛡️".to_string()
 }
 
-// --- MOTOR CON PROTECCIÓN DE LOOPBACK Y MTU FIX ---
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
@@ -313,11 +418,9 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let adapter = wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None).unwrap();
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // EJECUTAR OPTIMIZACIÓN CON MTU FIX
     optimizar_windows_nuclear(&puerto_local);
-    
     iniciar_receptor_archivos(app_handle.clone());
+    
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
     if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) { let _ = app_handle.emit("stun-result", (public_ip, public_port)); }
     if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
@@ -342,22 +445,27 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
-                        let first_byte = bytes[16];
-                        let is_multicast = first_byte >= 224 && first_byte <= 239;
+                        let is_multicast = bytes[16] >= 224 && bytes[16] <= 239;
 
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
-                                    // --- REPETIDOR INTELIGENTE (SIN ECO) ---
-                                    for (virtual_ip, real_endpoint) in table.iter() {
-                                        // No enviamos el paquete a nosotros mismos (aunque la tabla no debería tenernos)
-                                        if *virtual_ip != ip_virtual {
-                                            enviar_paquete_turbo(&socket_out, real_endpoint, bytes, &cipher_out); 
+                                    // REPETIDOR SMART: Envía a TODOS (Broadcast)
+                                    for (vip, endpoint) in table.iter() {
+                                        if *vip != ip_virtual {
+                                            enviar_paquete_smart(&socket_out, vip, endpoint, bytes, &cipher_out);
                                         }
                                     }
                                 } else { 
-                                    if let Some(t) = table.get(&dest_ip) { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
-                                    else { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } 
+                                    // UNICAST SMART
+                                    if let Some(endpoint) = table.get(&dest_ip) { 
+                                        enviar_paquete_smart(&socket_out, &dest_ip, endpoint, bytes, &cipher_out); 
+                                    } else {
+                                        // Fallback Broadcast si no conocemos la IP destino en la tabla
+                                        for (vip, endpoint) in table.iter() {
+                                            if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoint, bytes, &cipher_out); }
+                                        }
+                                    } 
                                 }
                                 if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
@@ -374,7 +482,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN UNIVERSAL OPTIMIZADA".to_string()
+    "VPN AUTO-FAILOVER ACTIVA".to_string()
 }
 
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
