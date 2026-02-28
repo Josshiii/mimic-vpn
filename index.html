@@ -49,6 +49,11 @@
         <label>TU NOMBRE</label><input id="my-name" placeholder="Tu Nickname"><label>JUEGO</label><input id="my-game" value="Halo CE"><label>CONTRASEÑA SALA</label><input id="host-password" placeholder="Opcional" type="password" style="border-color: #a4d007;">
         <button id="btn-host" class="btn-host">CREAR SALA</button>
         <button onclick="fixNetwork()" style="margin-top:10px; background:transparent; border:1px solid #444; color:#888; width:100%; padding:8px; border-radius:4px; cursor:pointer; font-size:10px;">🚑 REPARAR CONEXIÓN JUEGO</button>
+        
+        <div style="margin-top:10px; display:flex; align-items:center; gap:10px; justify-content: center;">
+            <span style="font-size:10px; color:#666;">Modo Relay</span>
+            <input type="checkbox" id="relay-toggle" onchange="toggleRelay()">
+        </div>
     </div>
     <div class="main-content">
         <div class="section-title"><span>SALAS PÚBLICAS</span><span id="server-status" style="font-size:11px;">Conectando...</span></div>
@@ -133,7 +138,24 @@
             if(r.includes("ÉXITO")){s.textContent="NAT: ABIERTA";s.style.color="#a4d007";}else{s.textContent="NAT: MODERADA";s.style.color="#f97316";}
             }catch(e){s.textContent="NAT: ESTRICTA";s.style.color="#ef4444";}
         }
+        
+        // --- HERRAMIENTAS AVANZADAS ---
         window.fixNetwork = async () => { showToast("🔧 Ajustando prioridades...", "info"); try { const r = await invoke("forzar_prioridad"); showToast(r, "success"); playSound('join'); } catch(e) { showToast("Error", "error"); } };
+
+        window.toggleRelay = async () => {
+            const isChecked = document.getElementById('relay-toggle').checked;
+            if (isChecked) {
+                // NOTA: Para producción real, cambia '127.0.0.1' por la IP pública de tu VPS donde corre server.js
+                // Usamos 127.0.0.1 para pruebas locales si tienes el servidor en tu PC
+                const relayServer = "127.0.0.1:10000"; 
+                try {
+                    const res = await invoke("activar_relay", { serverIp: relayServer, miIpVirtual: myAutoIp });
+                    showToast(res, "success");
+                } catch(e) { showToast("Error activando Relay", "error"); }
+            } else {
+                showToast("Reinicia la app para desactivar Relay", "info");
+            }
+        };
 
         // --- NET GRAPH & TELEMETRY ---
         let bin=0,bout=0,lc=Date.now();
