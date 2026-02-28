@@ -90,7 +90,7 @@
         // --- LOGICA HÍBRIDA + STUN ---
         async function getMyLocalIp() { try { myLocalIp = await invoke("obtener_ip_local_cmd"); console.log("Mi Local IP:", myLocalIp); } catch(e){} }
 
-        // STUN LISTENER (NUEVO)
+        // STUN LISTENER
         listen('stun-result', (event) => {
             const [ip, port] = event.payload;
             console.log("STUN Detectado:", ip, port);
@@ -100,20 +100,13 @@
         });
 
         async function connectToBestRoute(msg) {
-            // 1. Plan A: WAN (Internet) usando el puerto que nos dijo el peer (STUN o Local)
             let wanPort = msg.peer_port; 
             await invoke("agregar_peer", { ipDestino: msg.peer_ip + ":" + wanPort, ipVirtual: msg.peer_virtual_ip });
             
             let routeType = "WAN 🌍";
             
-            // 2. Plan B: LAN (Si estamos en la misma red)
             if (msg.peer_local_ip && msg.peer_local_ip !== "127.0.0.1") {
-                // Intentamos conectar a la IP local también. El switch elegirá la que funcione primero.
-                // Importante: En LAN solemos usar el puerto interno (5000 por defecto), no el STUN
-                // Pero como no sabemos si usó upnp, probamos el puerto reportado
                 await invoke("agregar_peer", { ipDestino: msg.peer_local_ip + ":" + document.getElementById('puerto-local').value, ipVirtual: msg.peer_virtual_ip });
-                
-                // Si nuestras IPs locales se parecen, asumimos LAN para la UI
                 if (myLocalIp.split('.')[0] === msg.peer_local_ip.split('.')[0] && myLocalIp.split('.')[1] === msg.peer_local_ip.split('.')[1]) {
                      routeType = "LAN 🏠";
                 }
@@ -133,10 +126,7 @@
                 vpnStarted = true;
                 const turbo = document.getElementById('turbo-icon'); turbo.style.display="inline"; turbo.style.color="#a4d007"; turbo.style.textShadow="0 0 5px #a4d007";
                 document.getElementById('log-text').textContent = `Seguro (${myAutoIp})`; document.getElementById('log-text').style.color="#a4d007";
-                
-                // Intentamos UPnP como fallback si STUN falla o para ayudar
-                checkNat(); 
-                
+                checkNat();
                 showToast("💡 Consejo: Puedes cerrar la ventana, la VPN seguirá activa.", "info");
             } catch(e) { console.error(e); }
         }
@@ -162,6 +152,31 @@
         });
         setInterval(()=>{const n=Date.now(),d=(n-lc)/1000;lc=n;if(bout>0){const s=(bout/1024)/d;const sa=100-((bin/bout)*100);document.getElementById('speed-display').textContent=s.toFixed(1)+" KB/s";document.getElementById('turbo-display').textContent=(sa>0?sa.toFixed(0):"0")+"%";document.getElementById('turbo-display').style.color="#a4d007";bin=0;bout=0;}else{document.getElementById('speed-display').textContent="0 KB/s";}},1000);
         function animateLed(){const l=document.getElementById('traffic-led');l.style.background="#a4d007";setTimeout(()=>{l.style.background="#333";},50);}
+
+        // --- AUTO-DETECCION DE JUEGOS (NUEVO) ---
+        setInterval(async () => {
+            if (document.activeElement === document.getElementById('my-game')) return;
+            try {
+                const gameDetected = await invoke("detectar_juego");
+                if (gameDetected) {
+                    const currentVal = document.getElementById('my-game').value;
+                    if (currentVal !== gameDetected) {
+                        document.getElementById('my-game').value = gameDetected;
+                        if (ws && ws.readyState === 1 && savedName) {
+                            ws.send(JSON.stringify({
+                                type: 'LOGIN',
+                                id: myId,
+                                name: savedName,
+                                virtualIp: myAutoIp,
+                                localIp: myLocalIp,
+                                game: gameDetected
+                            }));
+                        }
+                        showToast(`🎮 Detectado: ${gameDetected}`, "info");
+                    }
+                }
+            } catch(e) {}
+        }, 5000);
 
         // --- WEBSOCKET ---
         function connect() {
@@ -190,7 +205,6 @@
         document.getElementById('btn-host').addEventListener('click',async()=>{
             const code=Math.random().toString(36).substring(7); const pwd=document.getElementById('host-password').value.trim();
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
-            // ENVIO PUERTO STUN SI EXISTE, SI NO EL LOCAL
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; document.getElementById('host-password').disabled=true; enableChat();
