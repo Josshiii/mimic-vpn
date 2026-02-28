@@ -38,7 +38,7 @@ static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
 // --- MIMIC SHIELD: FILTRO DE SEGURIDAD ---
-// Retorna TRUE si el paquete es seguro, FALSE si es malicioso
+// Esta función decide si un paquete es peligroso
 fn es_paquete_seguro(packet: &[u8]) -> bool {
     // 1. Verificación básica de longitud IPv4 (Header mínimo 20 bytes)
     if packet.len() < 20 { return false; }
@@ -46,28 +46,27 @@ fn es_paquete_seguro(packet: &[u8]) -> bool {
     // 2. Extraer Protocolo (Byte 9)
     let protocol = packet[9];
     
-    // Si no es TCP (6) ni UDP (17) ni ICMP (1), bloquear (pueden ser protocolos raros de ataque)
+    // Solo permitimos TCP (6), UDP (17) e ICMP (1 - Ping)
     if protocol != 6 && protocol != 17 && protocol != 1 { return false; }
 
-    // Si es TCP o UDP, verificar puertos
+    // Si es TCP o UDP, verificar puertos destino
     if protocol == 6 || protocol == 17 {
         if packet.len() < 24 { return false; } // Header IP (20) + Puertos (4)
         
-        // Los puertos están en los bytes 20-21 (Origen) y 22-23 (Destino)
-        let _src_port = ((packet[20] as u16) << 8) | (packet[21] as u16);
+        // Los puertos están en los bytes 22-23 (Destino)
         let dest_port = ((packet[22] as u16) << 8) | (packet[23] as u16);
 
         // --- BLACKLIST DE PUERTOS PELIGROSOS ---
-        // Estos puertos son usados por hackers para atacar Windows
+        // Bloqueamos servicios de Windows vulnerables a ataques
         match dest_port {
-            135 => return false, // RPC (Remote Procedure Call) - Muy peligroso
-            137 | 138 | 139 => return false, // NetBIOS - Información del sistema
-            445 => return false, // SMB - Carpetas Compartidas (WannaCry usaba este)
+            135 => return false, // RPC - Muy peligroso
+            137 | 138 | 139 => return false, // NetBIOS - Info del sistema
+            445 => return false, // SMB - Carpetas Compartidas (WannaCry)
             3389 => return false, // RDP - Escritorio Remoto
-            5900 => return false, // VNC
+            5900 => return false, // VNC - Control remoto
             23 => return false, // Telnet
             21 => return false, // FTP
-            _ => {} // El resto (juegos) pasa
+            _ => {} // El resto (juegos, que usan puertos altos) pasa
         }
     }
     true
@@ -249,7 +248,7 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
                             
                             // 2. MIMIC SHIELD: Inspección de Paquetes
                             if !es_paquete_seguro(&original) {
-                                // println!("🛡️ Paquete malicioso bloqueado");
+                                // Paquete malicioso bloqueado (Puerto 445, 3389, etc.)
                                 continue; // DROP (A la basura)
                             }
 
@@ -268,7 +267,7 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
     });
 }
 
-// ... (Resto de funciones: obtener_ip_local, obtener_ip_local_cmd, enviar_archivo, etc. SIN CAMBIOS) ...
+// ... (Resto de funciones: obtener_ip_local, etc. IGUALES) ...
 fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
