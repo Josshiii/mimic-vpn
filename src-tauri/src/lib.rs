@@ -20,7 +20,10 @@ use base64::{Engine as _, engine::general_purpose};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended}; 
 use igd_next::search_gateway;
 use igd_next::PortMappingProtocol;
-use sysinfo::System; // <--- CORREGIDO: Solo importamos System
+use sysinfo::System;
+
+// DISCORD RPC
+use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
@@ -30,42 +33,85 @@ const MAGIC_HEADER: &[u8; 8] = b"MIMIC_V1";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const FILE_PORT: u16 = 4444; 
 const STUN_SERVER: &str = "stun.l.google.com:19302";
+// ID de aplicación genérico para pruebas (Puedes crear el tuyo en Discord Dev Portal)
+const DISCORD_CLIENT_ID: &str = "1219918880000000000"; 
 
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
+// Guardamos el cliente de Discord en memoria para reutilizarlo
+static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 
-// --- 1. AUTO-DETECCION DE JUEGOS (VERSIÓN CORREGIDA 0.30+) ---
+// --- 0. INICIALIZAR DISCORD ---
+fn conectar_discord() {
+    let mut guard = DISCORD_CLIENT.lock().unwrap();
+    if guard.is_none() {
+        if let Ok(mut client) = DiscordIpcClient::new(DISCORD_CLIENT_ID) {
+            if client.connect().is_ok() {
+                // Estado inicial
+                let _ = client.set_activity(activity::Activity::new()
+                    .state("En el Menú")
+                    .details("Esperando conexión...")
+                    .assets(activity::Assets::new().large_image("mimic_logo").large_text("Mimic Hub VPN"))
+                );
+                *guard = Some(client);
+            }
+        }
+    }
+}
+
+fn actualizar_discord(estado: &str, detalles: &str) {
+    // Intentamos conectar si no lo estamos
+    conectar_discord(); 
+    if let Ok(mut guard) = DISCORD_CLIENT.lock() {
+        if let Some(client) = guard.as_mut() {
+            let _ = client.set_activity(activity::Activity::new()
+                .state(estado)
+                .details(detalles)
+                .assets(activity::Assets::new().large_image("mimic_logo").large_text("Mimic Hub Secure"))
+            );
+        }
+    }
+}
+
+// --- 1. AUTO-DETECCION DE JUEGOS Y DISCORD ---
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all();
-    s.refresh_all(); // Actualiza lista de procesos
+    s.refresh_all(); 
 
     let juegos = [
-        ("javaw.exe", "Minecraft Java"),
-        ("Minecraft.Windows.exe", "Minecraft Bedrock"),
-        ("haloce.exe", "Halo CE"),
-        ("Terraria.exe", "Terraria"),
-        ("valheim.exe", "Valheim"),
-        ("Among Us.exe", "Among Us"),
-        ("Stardew Valley.exe", "Stardew Valley"),
-        ("left4dead2.exe", "Left 4 Dead 2"),
-        ("csgo.exe", "CS:GO"),
-        ("hl2.exe", "Half-Life 2 / GMod"),
-        ("Factorio.exe", "Factorio"),
-        ("ProjectZomboid64.exe", "Project Zomboid")
+        ("javaw.exe", "Minecraft Java"), ("Minecraft.Windows.exe", "Minecraft Bedrock"),
+        ("haloce.exe", "Halo CE"), ("Terraria.exe", "Terraria"),
+        ("valheim.exe", "Valheim"), ("Among Us.exe", "Among Us"),
+        ("Stardew Valley.exe", "Stardew Valley"), ("left4dead2.exe", "Left 4 Dead 2"),
+        ("csgo.exe", "CS:GO"), ("hl2.exe", "Half-Life 2"), ("Factorio.exe", "Factorio"),
+        ("ProjectZomboid64.exe", "Project Zomboid"), ("Content Warning.exe", "Content Warning"),
+        ("Lethal Company.exe", "Lethal Company")
     ];
 
-    // Iteramos sobre todos los procesos activos
     for process in s.processes().values() {
         let p_name = process.name().to_lowercase();
-        
         for (exe, nombre) in juegos.iter() {
             let exe_limpio = exe.trim_end_matches(".exe").to_lowercase();
             if p_name.contains(&exe_limpio) {
+                // ¡JUEGO DETECTADO! Actualizamos Discord
+                actualizar_discord("Jugando en LAN", nombre);
                 return nombre.to_string();
             }
         }
     }
+    
+    // Si no hay juego, pero estamos conectados a VPN
+    if let Ok(guard) = ROUTING_TABLE.lock() {
+        if let Some(table) = guard.as_ref() {
+            if !table.is_empty() {
+                actualizar_discord("Conectado", "En Sala de Espera");
+            } else {
+                actualizar_discord("Inactivo", "Explorando Mimic Hub");
+            }
+        }
+    }
+    
     "".to_string()
 }
 
@@ -77,8 +123,7 @@ fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
     while let Ok(attr_type) = cursor.read_u16::<BigEndian>() {
         let attr_len = cursor.read_u16::<BigEndian>().unwrap_or(0);
         if attr_type == 0x0020 {
-            let _family = cursor.read_u8().unwrap_or(0); 
-            let _port = cursor.read_u8().unwrap_or(0); 
+            let _family = cursor.read_u8().unwrap_or(0); let _port = cursor.read_u8().unwrap_or(0); 
             let xor_port = cursor.read_u16::<BigEndian>().unwrap_or(0);
             let xor_ip = cursor.read_u32::<BigEndian>().unwrap_or(0);
             let port = xor_port ^ 0x2112;
@@ -94,11 +139,9 @@ fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
 
 fn realizar_consulta_stun(socket: &UdpSocket) -> Option<(String, u16)> {
     let mut packet = vec![0u8; 20];
-    packet[0] = 0x00; packet[1] = 0x01; 
-    packet[2] = 0x00; packet[3] = 0x00; 
+    packet[0] = 0x00; packet[1] = 0x01; packet[2] = 0x00; packet[3] = 0x00; 
     packet[4] = 0x21; packet[5] = 0x12; packet[6] = 0xA4; packet[7] = 0x42; 
     rand::thread_rng().fill_bytes(&mut packet[8..20]);
-
     if socket.send_to(&packet, STUN_SERVER).is_ok() {
         let mut buf = [0u8; 1024];
         socket.set_read_timeout(Some(Duration::from_millis(500))).ok();
@@ -148,7 +191,6 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// --- ARCHIVOS ---
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
@@ -198,7 +240,6 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
     });
 }
 
-// --- VPN ENGINE CON QoS y SERVICE DISCOVERY ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -229,7 +270,6 @@ fn obtener_ip_local() -> Option<Ipv4Addr> {
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
 }
 
-// --- COMANDOS EXPORTADOS ---
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
 
@@ -297,6 +337,8 @@ fn generar_clave_segura() -> String {
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
+    actualizar_discord("Conectado a Mimic Hub", "Esperando Paquetes..."); // <--- ACTUALIZA DISCORD AL INICIAR
+
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave mal".to_string() };
     if key_bytes.len() != 32 { return "Longitud mal".to_string(); }
     let key = Key::from_slice(&key_bytes); let cipher = Arc::new(ChaCha20Poly1305::new(key));
@@ -308,12 +350,9 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     iniciar_receptor_archivos(app_handle.clone());
     
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
-    
-    // STUN CALL
     if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) {
         let _ = app_handle.emit("stun-result", (public_ip, public_port));
     }
-
     if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
 
     let session_arc = Arc::new(session);
@@ -326,8 +365,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
-                    
-                    // QoS System
                     if bytes.len() > 20 {
                         let protocol = bytes[9];
                         if protocol == 6 { 
@@ -335,14 +372,11 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                             last_tcp_packet = Instant::now();
                         }
                     }
-
-                    // Service Discovery Broadcast/Multicast
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
                         let first_byte = bytes[16];
                         let is_multicast = first_byte >= 224 && first_byte <= 239;
-
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
@@ -366,10 +400,9 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN COMPLETA: QoS + STUN + DETECCIÓN JUEGOS".to_string()
+    "VPN E2EE + QoS + STUN + DISCORD ACTIVA".to_string()
 }
 
-// --- SYSTEM TRAY ---
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -382,6 +415,9 @@ pub fn run() {
             detectar_juego
         ])
         .setup(|app| {
+            // Inicializar Discord al arrancar la app
+            conectar_discord(); 
+
             let quit_i = MenuItem::with_id(app, "quit", "Salir de Mimic Hub", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "Mostrar Ventana", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
