@@ -7,8 +7,9 @@ use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
 use std::fs::File; 
-use std::io::{Read, Write}; 
+use std::io::{Read, Write, Cursor}; 
 use std::path::{Path, PathBuf};
+use byteorder::{BigEndian, ReadBytesExt}; 
 
 // SEGURIDAD & UTILIDADES
 use x25519_dalek::{PublicKey, StaticSecret}; 
@@ -19,7 +20,7 @@ use base64::{Engine as _, engine::general_purpose};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended}; 
 use igd_next::search_gateway;
 use igd_next::PortMappingProtocol;
-use sysinfo::{System, SystemExt, ProcessExt}; // <--- NUEVO: Para espiar procesos
+use sysinfo::System; // <--- CORREGIDO: Solo importamos System
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
@@ -28,17 +29,17 @@ const HOLE_PUNCH_MSG: &[u8] = b"__MIMIC_PUNCH__";
 const MAGIC_HEADER: &[u8; 8] = b"MIMIC_V1"; 
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 const FILE_PORT: u16 = 4444; 
+const STUN_SERVER: &str = "stun.l.google.com:19302";
 
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 
-// --- 1. AUTO-DETECCION DE JUEGOS ---
+// --- 1. AUTO-DETECCION DE JUEGOS (VERSIÓN CORREGIDA 0.30+) ---
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all();
-    s.refresh_processes();
+    s.refresh_all(); // Actualiza lista de procesos
 
-    // Lista de procesos conocidos (puedes añadir más)
     let juegos = [
         ("javaw.exe", "Minecraft Java"),
         ("Minecraft.Windows.exe", "Minecraft Bedrock"),
@@ -54,18 +55,63 @@ fn detectar_juego() -> String {
         ("ProjectZomboid64.exe", "Project Zomboid")
     ];
 
-    for (exe, nombre) in juegos.iter() {
-        // Buscamos si el proceso existe (case insensitive aprox)
-        for process in s.processes_by_name(exe.trim_end_matches(".exe")) {
-            if process.name().to_lowercase().contains(&exe.trim_end_matches(".exe").to_lowercase()) {
+    // Iteramos sobre todos los procesos activos
+    for process in s.processes().values() {
+        let p_name = process.name().to_lowercase();
+        
+        for (exe, nombre) in juegos.iter() {
+            let exe_limpio = exe.trim_end_matches(".exe").to_lowercase();
+            if p_name.contains(&exe_limpio) {
                 return nombre.to_string();
             }
         }
     }
-    "".to_string() // Nada detectado
+    "".to_string()
 }
 
-// --- 2. GENERAR LLAVES ---
+// --- FUNCIONES STUN ---
+fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
+    if response.len() < 20 { return None; }
+    if response[0] != 0x01 || response[1] != 0x01 { return None; }
+    let mut cursor = Cursor::new(&response[20..]); 
+    while let Ok(attr_type) = cursor.read_u16::<BigEndian>() {
+        let attr_len = cursor.read_u16::<BigEndian>().unwrap_or(0);
+        if attr_type == 0x0020 {
+            let _family = cursor.read_u8().unwrap_or(0); 
+            let _port = cursor.read_u8().unwrap_or(0); 
+            let xor_port = cursor.read_u16::<BigEndian>().unwrap_or(0);
+            let xor_ip = cursor.read_u32::<BigEndian>().unwrap_or(0);
+            let port = xor_port ^ 0x2112;
+            let ip_int = xor_ip ^ 0x2112A442;
+            let ip = Ipv4Addr::from(ip_int);
+            return Some((ip.to_string(), port));
+        }
+        if cursor.position() + attr_len as u64 > response.len() as u64 { break; }
+        cursor.set_position(cursor.position() + attr_len as u64);
+    }
+    None
+}
+
+fn realizar_consulta_stun(socket: &UdpSocket) -> Option<(String, u16)> {
+    let mut packet = vec![0u8; 20];
+    packet[0] = 0x00; packet[1] = 0x01; 
+    packet[2] = 0x00; packet[3] = 0x00; 
+    packet[4] = 0x21; packet[5] = 0x12; packet[6] = 0xA4; packet[7] = 0x42; 
+    rand::thread_rng().fill_bytes(&mut packet[8..20]);
+
+    if socket.send_to(&packet, STUN_SERVER).is_ok() {
+        let mut buf = [0u8; 1024];
+        socket.set_read_timeout(Some(Duration::from_millis(500))).ok();
+        if let Ok((amt, _src)) = socket.recv_from(&mut buf) {
+            socket.set_read_timeout(None).ok();
+            return parse_stun_response(&buf[..amt]);
+        }
+    }
+    socket.set_read_timeout(None).ok();
+    None
+}
+
+// --- COMANDOS EXISTENTES ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
     let mut secret_bytes = [0u8; 32];
@@ -86,7 +132,6 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 
-// --- UTILIDADES ---
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
 
 fn optimizar_windows(p: &str) { 
@@ -153,7 +198,7 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
     });
 }
 
-// --- VPN ENGINE CON QoS ---
+// --- VPN ENGINE CON QoS y SERVICE DISCOVERY ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -263,6 +308,12 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     iniciar_receptor_archivos(app_handle.clone());
     
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
+    
+    // STUN CALL
+    if let Some((public_ip, public_port)) = realizar_consulta_stun(&socket_local) {
+        let _ = app_handle.emit("stun-result", (public_ip, public_port));
+    }
+
     if let Ok(mut s) = GLOBAL_SOCKET.lock() { *s = Some(socket_local.try_clone().unwrap()); }
 
     let session_arc = Arc::new(session);
@@ -275,6 +326,8 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
+                    
+                    // QoS System
                     if bytes.len() > 20 {
                         let protocol = bytes[9];
                         if protocol == 6 { 
@@ -283,6 +336,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                         }
                     }
 
+                    // Service Discovery Broadcast/Multicast
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
@@ -312,7 +366,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN E2EE + QoS + AUTO-GAME ACTIVA".to_string()
+    "VPN COMPLETA: QoS + STUN + DETECCIÓN JUEGOS".to_string()
 }
 
 // --- SYSTEM TRAY ---
@@ -325,7 +379,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, 
             intentar_upnp, enviar_archivo, generar_clave_segura, obtener_ip_local_cmd,
-            detectar_juego // <--- ¡AQUÍ ESTÁ EL NUEVO COMANDO!
+            detectar_juego
         ])
         .setup(|app| {
             let quit_i = MenuItem::with_id(app, "quit", "Salir de Mimic Hub", true, None::<&str>)?;
