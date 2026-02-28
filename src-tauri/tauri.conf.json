@@ -19,8 +19,16 @@
         "maximizable": false,
         "fullscreen": false,
         "center": true
-      }
-    ],
+ "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://tu-sitio-web.com/updates.json"  
+      ],
+      "dialog": false, // Lo haremos con nuestra propia interfaz bonita
+      "pubkey": "AQUÍ_VA_TU_CLAVE_PÚBLICA_GENERADA"
+    }
+  },
     "security": {
       "csp": null
     }
@@ -39,3 +47,4 @@
     ]
   }
 }
+
