@@ -2,8 +2,7 @@ use std::net::{UdpSocket, TcpListener, TcpStream, SocketAddr, SocketAddrV4, Ipv4
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
-use std::time::Instant; // Necesario para QoS
+use std::time::{Duration, Instant};
 use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
@@ -11,7 +10,7 @@ use std::fs::File;
 use std::io::{Read, Write}; 
 use std::path::{Path, PathBuf};
 
-// SEGURIDAD AVANZADA
+// SEGURIDAD & UTILIDADES
 use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -20,6 +19,7 @@ use base64::{Engine as _, engine::general_purpose};
 use lz4_flex::{compress_prepend_size, decompress_size_prepended}; 
 use igd_next::search_gateway;
 use igd_next::PortMappingProtocol;
+use sysinfo::{System, SystemExt, ProcessExt}; // <--- NUEVO: Para espiar procesos
 
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
@@ -32,7 +32,40 @@ const FILE_PORT: u16 = 4444;
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 
-// --- UTILIDADES CRIPTO ---
+// --- 1. AUTO-DETECCION DE JUEGOS ---
+#[tauri::command]
+fn detectar_juego() -> String {
+    let mut s = System::new_all();
+    s.refresh_processes();
+
+    // Lista de procesos conocidos (puedes añadir más)
+    let juegos = [
+        ("javaw.exe", "Minecraft Java"),
+        ("Minecraft.Windows.exe", "Minecraft Bedrock"),
+        ("haloce.exe", "Halo CE"),
+        ("Terraria.exe", "Terraria"),
+        ("valheim.exe", "Valheim"),
+        ("Among Us.exe", "Among Us"),
+        ("Stardew Valley.exe", "Stardew Valley"),
+        ("left4dead2.exe", "Left 4 Dead 2"),
+        ("csgo.exe", "CS:GO"),
+        ("hl2.exe", "Half-Life 2 / GMod"),
+        ("Factorio.exe", "Factorio"),
+        ("ProjectZomboid64.exe", "Project Zomboid")
+    ];
+
+    for (exe, nombre) in juegos.iter() {
+        // Buscamos si el proceso existe (case insensitive aprox)
+        for process in s.processes_by_name(exe.trim_end_matches(".exe")) {
+            if process.name().to_lowercase().contains(&exe.trim_end_matches(".exe").to_lowercase()) {
+                return nombre.to_string();
+            }
+        }
+    }
+    "".to_string() // Nada detectado
+}
+
+// --- 2. GENERAR LLAVES ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
     let mut secret_bytes = [0u8; 32];
@@ -53,7 +86,7 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 
-// --- UTILIDADES SISTEMA ---
+// --- UTILIDADES ---
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
 
 fn optimizar_windows(p: &str) { 
@@ -70,7 +103,7 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// --- SISTEMA DE ARCHIVOS ---
+// --- ARCHIVOS ---
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
@@ -120,7 +153,7 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
     });
 }
 
-// --- VPN ENGINE ---
+// --- VPN ENGINE CON QoS ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -237,38 +270,21 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let socket_out = socket_local.try_clone().unwrap(); let cipher_out = cipher.clone(); let app_out = app_handle.clone(); let session_out = session_arc.clone();
     
     thread::spawn(move || {
-        // --- QoS: VARIABLES DE CONTROL ---
-        let mut last_tcp_packet = Instant::now(); // Cronómetro para frenar TCP
-        
+        let mut last_tcp_packet = Instant::now();
         loop {
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
-                    
-                    // --- QoS: ANTI-LAG SYSTEM ---
-                    // Inspeccionamos la cabecera IPv4 para ver qué tipo de paquete es
                     if bytes.len() > 20 {
-                        // El byte 9 en IPv4 es el "Protocolo"
-                        // 0x06 (6) = TCP (Archivos, HTTP) -> BAJA PRIORIDAD
-                        // 0x11 (17) = UDP (Juegos, VoIP) -> ALTA PRIORIDAD
                         let protocol = bytes[9];
-                        
-                        if protocol == 6 { // Es TCP (Archivo)
-                            // Aplicamos un micro-freno si estamos enviando muy rápido
-                            // Esto evita que TCP se coma todo el ancho de banda
-                            if last_tcp_packet.elapsed().as_micros() < 500 {
-                                // Si han pasado menos de 500 microsegundos, esperamos un poco
-                                thread::sleep(Duration::from_micros(200));
-                            }
+                        if protocol == 6 { 
+                            if last_tcp_packet.elapsed().as_micros() < 500 { thread::sleep(Duration::from_micros(200)); }
                             last_tcp_packet = Instant::now();
                         }
-                        // Si es UDP (Juegos), NO HACEMOS NADA. Pasa directo a máxima velocidad.
                     }
-                    // -----------------------------
 
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
-                        
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
                         let first_byte = bytes[16];
                         let is_multicast = first_byte >= 224 && first_byte <= 239;
@@ -296,7 +312,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN E2EE + QoS ACTIVA".to_string()
+    "VPN E2EE + QoS + AUTO-GAME ACTIVA".to_string()
 }
 
 // --- SYSTEM TRAY ---
@@ -306,7 +322,11 @@ use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIco
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, intentar_upnp, enviar_archivo, generar_clave_segura, obtener_ip_local_cmd])
+        .invoke_handler(tauri::generate_handler![
+            iniciar_vpn, agregar_peer, generar_identidad, calcular_secreto, 
+            intentar_upnp, enviar_archivo, generar_clave_segura, obtener_ip_local_cmd,
+            detectar_juego // <--- ¡AQUÍ ESTÁ EL NUEVO COMANDO!
+        ])
         .setup(|app| {
             let quit_i = MenuItem::with_id(app, "quit", "Salir de Mimic Hub", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "Mostrar Ventana", true, None::<&str>)?;
