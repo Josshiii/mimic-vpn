@@ -11,7 +11,6 @@ use std::io::{Read, Write, Cursor};
 use std::path::{Path, PathBuf};
 use byteorder::{BigEndian, ReadBytesExt}; 
 
-// SEGURIDAD & UTILIDADES
 use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -36,10 +35,9 @@ const DISCORD_CLIENT_ID: &str = "1219918880000000000";
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
-// VARIABLE GLOBAL PARA MODO RELAY
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
-// --- DISCORD ---
+// --- UTILIDADES BÁSICAS ---
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -60,11 +58,36 @@ fn actualizar_discord(estado: &str, detalles: &str) {
     }
 }
 
-// --- JUEGOS ---
+// --- LA SOLUCIÓN NUCLEAR (OPTIMIZACIÓN AGRESIVA) ---
+fn optimizar_windows_nuclear(puerto_udp: &str) { 
+    // 1. Prioridad Absoluta (Métrica 1)
+    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // 2. Perfil Privado (Evita bloqueos de Firewall "Público")
+    let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+
+    // 3. REGLA DE ORO: Permitir TODO el tráfico entrante en la interfaz VPN
+    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+
+    // 4. SECUESTRO DE MULTICAST (Para que Minecraft vea la LAN)
+    // Añadimos la ruta 224.0.0.0/4 apuntando a la interfaz de la VPN
+    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // 5. Abrir puerto UDP local
+    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
+}
+
+#[tauri::command]
+fn forzar_prioridad() -> String {
+    // Re-ejecutamos la optimización nuclear bajo demanda
+    optimizar_windows_nuclear("0"); // Puerto 0 porque solo queremos las reglas generales
+    "🚀 Tráfico de Juegos Forzado por VPN".to_string()
+}
+
+// ... (Resto de funciones: detectar_juego, parse_stun, etc. IGUALES) ...
 #[tauri::command]
 fn detectar_juego() -> String {
-    let mut s = System::new_all();
-    s.refresh_all(); 
+    let mut s = System::new_all(); s.refresh_all(); 
     let juegos = [("javaw.exe", "Minecraft Java"), ("Minecraft.Windows.exe", "Minecraft Bedrock"), ("haloce.exe", "Halo CE"), ("Terraria.exe", "Terraria"), ("valheim.exe", "Valheim"), ("Among Us.exe", "Among Us"), ("Stardew Valley.exe", "Stardew Valley"), ("left4dead2.exe", "Left 4 Dead 2"), ("csgo.exe", "CS:GO"), ("hl2.exe", "Half-Life 2"), ("Factorio.exe", "Factorio"), ("ProjectZomboid64.exe", "Project Zomboid"), ("Content Warning.exe", "Content Warning"), ("Lethal Company.exe", "Lethal Company")];
     for process in s.processes().values() {
         let p_name = process.name().to_lowercase();
@@ -76,7 +99,6 @@ fn detectar_juego() -> String {
     "".to_string()
 }
 
-// --- STUN ---
 fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
     if response.len() < 20 { return None; }
     if response[0] != 0x01 || response[1] != 0x01 { return None; }
@@ -113,8 +135,6 @@ fn realizar_consulta_stun(socket: &UdpSocket) -> Option<(String, u16)> {
     socket.set_read_timeout(None).ok();
     None
 }
-
-// --- COMANDOS BÁSICOS ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
     let mut secret_bytes = [0u8; 32]; rand::thread_rng().fill_bytes(&mut secret_bytes);
@@ -132,41 +152,26 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
-fn optimizar_windows(p: &str) { 
-    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", p), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", p)]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Files\"", "dir=in", "action=allow", "protocol=TCP", &format!("localport={}", FILE_PORT)]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-}
 
-// --- ENVÍO INTELIGENTE (DIRECTO O RELAY) ---
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
         let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
         
-        // CHECK RELAY MODE
-        let relay_target = {
-            let guard = RELAY_ADDRESS.lock().unwrap();
-            guard.clone()
-        };
-
+        let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
         if let Some(relay_ip) = relay_target {
-            // MODO RELAY: Envolvemos [IP_DESTINO (4 Bytes)][DATA]
-            // destino string "10.10.10.X" -> Bytes
             if let Ok(ip_addr) = destino.parse::<Ipv4Addr>() {
                 let mut relay_packet = ip_addr.octets().to_vec();
                 relay_packet.extend_from_slice(&final_packet);
                 let _ = socket.send_to(&relay_packet, relay_ip);
             }
         } else {
-            // MODO P2P DIRECTO
             let _ = socket.send_to(&final_packet, destino);
         }
     }
 }
 
-// ... (Archivos, hilos, etc.) ...
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
@@ -242,8 +247,6 @@ fn obtener_ip_local() -> Option<Ipv4Addr> {
     let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; 
     if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None
 }
-
-// --- COMANDOS EXPORTADOS ---
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
 #[tauri::command]
@@ -304,38 +307,16 @@ fn generar_clave_segura() -> String {
     let mut key = [0u8; 32]; rand::thread_rng().fill_bytes(&mut key); general_purpose::STANDARD.encode(key)
 }
 #[tauri::command]
-fn forzar_prioridad() -> String {
-    let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    "Prioridad y Firewall Ajustados 🚑".to_string()
-}
-
-// --- COMANDO NUEVO: ACTIVAR RELAY ---
-#[tauri::command]
 fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
-    // 1. Guardar la IP del servidor relay
-    if let Ok(mut guard) = RELAY_ADDRESS.lock() {
-        *guard = Some(server_ip.clone());
-    }
-    
-    // 2. Iniciar el "Keep-Alive" (Registro) hacia el servidor relay
+    if let Ok(mut guard) = RELAY_ADDRESS.lock() { *guard = Some(server_ip.clone()); }
     if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
         if let Some(socket) = socket_guard.as_ref() {
-            let s_clone = socket.try_clone().unwrap();
-            let target = server_ip.clone();
-            
-            // Paquete de Registro: [0xFF] [IP Virtual (4 bytes)]
+            let s_clone = socket.try_clone().unwrap(); let target = server_ip.clone();
             if let Ok(ip_addr) = mi_ip_virtual.parse::<Ipv4Addr>() {
-                let mut reg_packet = vec![0xFF];
-                reg_packet.extend_from_slice(&ip_addr.octets());
-                
+                let mut reg_packet = vec![0xFF]; reg_packet.extend_from_slice(&ip_addr.octets());
                 thread::spawn(move || {
                     loop {
-                        // Enviar registro cada 15 segundos para mantener el puerto abierto en el NAT
-                        let _ = s_clone.send_to(&reg_packet, &target);
-                        thread::sleep(Duration::from_secs(15));
-                        
-                        // Si desactivamos el relay, paramos (check simple)
+                        let _ = s_clone.send_to(&reg_packet, &target); thread::sleep(Duration::from_secs(15));
                         if RELAY_ADDRESS.lock().unwrap().is_none() { break; }
                     }
                 });
@@ -345,10 +326,12 @@ fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
     "MODO RELAY ACTIVADO 🛡️".to_string()
 }
 
+// --- ENGINE PRINCIPAL ---
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
     actualizar_discord("Conectado a Mimic Hub", "Esperando Paquetes..."); 
+    
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave mal".to_string() };
     if key_bytes.len() != 32 { return "Longitud mal".to_string(); }
     let key = Key::from_slice(&key_bytes); let cipher = Arc::new(ChaCha20Poly1305::new(key));
@@ -356,7 +339,10 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let adapter = wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None).unwrap();
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
-    optimizar_windows(&puerto_local);
+    
+    // --- EJECUTAMOS OPTIMIZACIÓN NUCLEAR AUTOMÁTICAMENTE ---
+    optimizar_windows_nuclear(&puerto_local);
+    
     iniciar_receptor_archivos(app_handle.clone());
     
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
@@ -410,7 +396,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN E2EE + QoS + RELAY READY".to_string()
+    "VPN NUCLEAR ACTIVA ☢️".to_string()
 }
 
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
