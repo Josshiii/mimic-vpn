@@ -27,6 +27,8 @@
         .friends-section { flex: 1; padding: 15px; overflow-y: auto; border-bottom: 1px solid #000; max-height: 50%; }
         .add-friend-box { display: flex; gap: 5px; margin-bottom: 10px; } .btn-add { background: #3d4450; border: 1px solid #555; color: white; width: 30px; cursor: pointer; border-radius: 4px; }
         .friend-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #222; cursor: pointer; } .friend-item:hover { background: rgba(255,255,255,0.05); }
+        .btn-kick { background: #ef4444; color: white; border: none; border-radius: 4px; width: 20px; height: 20px; font-size: 10px; cursor: pointer; margin-left: 5px; display: flex; align-items: center; justify-content: center; }
+        .btn-kick:hover { background: #dc2626; }
         .f-avatar { width: 28px; height: 28px; background: #333; border-radius: 4px; display: flex; justify-content: center; align-items: center; font-size: 12px; font-weight: bold; color: #888; border: 2px solid #444; }
         .f-avatar.online { border-color: #66c0f4; color: white; background: #2a475e; } .f-avatar.playing { border-color: #a4d007; color: white; background: #2a475e; }
         .f-info { display: flex; flex-direction: column; } .f-name { font-size: 12px; font-weight: bold; color: #888; } .f-name.online { color: #66c0f4; } .f-ip { font-size: 10px; color: #555; font-family: monospace; } .f-ip.visible { color: #a4d007; }
@@ -66,6 +68,7 @@
 
         <button id="btn-host" class="btn-host">CREAR SALA</button>
         <button onclick="fixNetwork()" style="margin-top:10px; background:transparent; border:1px solid #444; color:#888; width:100%; padding:8px; border-radius:4px; cursor:pointer; font-size:10px;">🚑 REPARAR CONEXIÓN JUEGO</button>
+        
         <div style="margin-top:10px; display:flex; align-items:center; gap:10px; justify-content: center;">
             <span style="font-size:10px; color:#666;">Modo Relay</span>
             <input type="checkbox" id="relay-toggle" onchange="toggleRelay()">
@@ -98,37 +101,40 @@
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
-        
-        // --- IMPORTS PARA ACTUALIZADOR AUTOMÁTICO ---
         import { check } from '@tauri-apps/plugin-updater';
         import { relaunch } from '@tauri-apps/plugin-process';
 
         let ws; let vpnStarted = false; let myPrivateKey = ""; let myLocalIp = ""; let myStunPort = null; let myPublicIp = ""; let reconnectAttempts = 0; let currentRoomCode = ""; let amIHost = false;
 
-        // --- SISTEMA DE ACTUALIZACIÓN AUTOMÁTICA ---
         async function checkForUpdates() {
-            try {
-                const update = await check();
-                if (update) {
-                    showToast(`🚀 Nueva versión ${update.version} detectada. Descargando...`, "info");
-                    await update.downloadAndInstall();
-                    showToast("Actualización lista. Reiniciando...", "success");
-                    await relaunch();
-                }
-            } catch (e) {
-                console.log("No hay actualizaciones o error de firma (normal en dev)", e);
-            }
+            try { const update = await check(); if (update) { showToast(`🚀 Nueva versión ${update.version}. Descargando...`, "info"); await update.downloadAndInstall(); showToast("Reiniciando...", "success"); await relaunch(); } } catch (e) { console.log("Updater:", e); }
         }
-        // Ejecutar al inicio
         checkForUpdates();
 
-        // --- UTILS ---
+        // --- DEEP LINK LISTENER (NUEVO) ---
+        listen('open-url', (event) => {
+            const url = event.payload;
+            console.log("🔗 Link:", url);
+            try {
+                // mimic://join/CODE?pwd=PASS
+                const clean = url.replace("mimic://", "").replace(/\/$/, "");
+                const [action, data] = clean.split('/');
+                if (action === "join" && data) {
+                    const [code, query] = data.split('?');
+                    const params = new URLSearchParams(query);
+                    const pwd = params.get('pwd') || "";
+                    showToast(`🔗 Enlace detectado: ${code}`, "info");
+                    window.join(code, false, pwd); // Join automático
+                }
+            } catch(e) { showToast("Enlace inválido", "error"); }
+        });
+
+        // UTILS
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
         window.copyToClipboard=(t,m)=>{navigator.clipboard.writeText(t);showToast(m||"Copiado");};
         const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
         function playSound(t){if(audioCtx.state==='suspended')audioCtx.resume();const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);if(t==='msg'){o.type='sine';o.frequency.setValueAtTime(800,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(400,audioCtx.currentTime+0.1);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);o.start();o.stop(audioCtx.currentTime+0.1);}else if(t==='join'){o.type='triangle';o.frequency.setValueAtTime(440,audioCtx.currentTime);o.frequency.linearRampToValueAtTime(880,audioCtx.currentTime+0.2);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.3);o.start();o.stop(audioCtx.currentTime+0.3);}}
 
-        // --- INIT & PASSPORT ---
         let myId=localStorage.getItem('mimic_id');if(!myId){myId='M-'+Math.random().toString(36).substr(2,6).toUpperCase();localStorage.setItem('mimic_id',myId);}
         document.getElementById('my-id-display').textContent=myId;
         const myAutoIp=(()=>{let h=0;for(let i=0;i<myId.length;i++)h=myId.charCodeAt(i)+((h<<5)-h);return`10.10.10.${(Math.abs(h)%253)+2}`;})();
@@ -148,7 +154,6 @@
         function renderFriends(onlinePlayers){
             const l=document.getElementById('friends-list');l.innerHTML="";
             let displayList = [...friends];
-            // Renderizar lista combinada
             friends.forEach(f=>{
                 const o=onlinePlayers.find(p=>p.id===f.id);
                 const s=o?(o.status==="Jugando"?"playing":"online"):"";
@@ -162,7 +167,6 @@
             localStorage.setItem('mimic_friends',JSON.stringify(friends));
         }
 
-        // --- CORE FUNCTIONS ---
         window.handleChat=(e)=>{if(e.key==='Enter'){const i=document.getElementById('chat-input');const t=i.value.trim();if(t){ws.send(JSON.stringify({type:'CHAT',sender:savedName,text:t}));i.value="";}}};
         function addChatMessage(s,t,sys=false){const b=document.getElementById('chat-box');const d=document.createElement('div');d.className="msg";if(sys)d.innerHTML=`<div class="sys-msg">${t}</div>`;else d.innerHTML=`<span class="msg-sender">${s}:</span><span class="msg-text">${t}</span>`;b.appendChild(d);b.scrollTop=b.scrollHeight;}
         
@@ -249,11 +253,20 @@
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1], isPrivate: isPrivate}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; enableChat();
-            copyToClipboard(code, "Código Copiado"); amIHost = true;
+            
+            // GENERAR ENLACE DEEP LINK
+            let inviteLink = `mimic://join/${code}`;
+            if(pwd) inviteLink += `?pwd=${pwd}`;
+            copyToClipboard(inviteLink, "🔗 Enlace Copiado"); // COPIA EL LINK, NO EL CÓDIGO
+            amIHost = true;
         });
-        window.join=async(code,hasPwd)=>{
+        
+        window.join=async(code,hasPwd, directPwd=null)=>{
             currentRoomCode = code;
-            let pwd=""; if(hasPwd){pwd=prompt("🔒 Contraseña:")||"";}
+            let pwd=""; 
+            if(directPwd) pwd = directPwd;
+            else if(hasPwd){pwd=prompt("🔒 Contraseña:")||"";}
+            
             const keys = await invoke("generar_identidad"); myPrivateKey = keys[0];
             const portToSend = myStunPort || document.getElementById('puerto-local').value;
             ws.send(JSON.stringify({type:'JOIN',room:code,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1]}));
