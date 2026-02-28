@@ -8,12 +8,19 @@
         body { background-color: #1b2838; color: #c6d4df; height: 100vh; width: 100vw; overflow: hidden; display: flex; }
         ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #121418; } ::-webkit-scrollbar-thumb { background: #3d4450; border-radius: 3px; }
         .sidebar { width: 260px; background-color: #171a21; border-right: 1px solid #000; padding: 20px; display: flex; flex-direction: column; }
-        .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; }
+        
+        .profile-card { background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; border: 1px solid #3d4450; position: relative; }
+        .profile-actions { display: flex; justify-content: center; gap: 10px; margin-top: 10px; }
+        .btn-icon { background: #3d4450; border: none; color: #ccc; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; transition: 0.2s; }
+        .btn-icon:hover { background: #66c0f4; color: #000; }
+
         .my-avatar { width: 60px; height: 60px; background: linear-gradient(135deg, #66c0f4, #1b2838); border-radius: 50%; margin: 0 auto 10px; display: flex; justify-content: center; align-items: center; font-size: 24px; font-weight: bold; color: white; border: 2px solid #66c0f4; }
         .my-id-box { background: #000; padding: 5px; font-family: monospace; font-size: 11px; color: #a4d007; border-radius: 4px; margin-top: 5px; cursor: pointer; }
         .copy-tooltip { font-size: 9px; color: #666; margin-top: 2px; }
+        
         label { color: #66c0f4; font-size: 11px; font-weight: bold; margin-bottom: 5px; display: block; margin-top: 10px; }
         input { width: 100%; background: #101216; border: 1px solid #3d4450; color: #fff; padding: 8px; border-radius: 4px; font-size: 13px; outline: none; } input:focus { border-color: #66c0f4; }
+        
         .btn-host { margin-top: 20px; background: linear-gradient(90deg, #06BFFF 0%, #2D73FF 100%); color: white; border: none; padding: 12px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; } .btn-host:disabled { filter: grayscale(1); cursor: default; }
         .main-content { flex: 1; background: radial-gradient(circle at top, #2a475e 0%, #1b2838 70%); padding: 20px; display: flex; flex-direction: column; }
         .section-title { font-size: 14px; color: #fff; border-bottom: 1px solid #3d4450; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
@@ -41,11 +48,25 @@
         .status-bar { height: 25px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 10px; color: #666; } .hidden { display: none; }
         #toast-container { position: fixed; bottom: 40px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 1000; }
         .toast { background: #171a21; border-left: 4px solid #a4d007; padding: 12px 20px; color: white; border-radius: 4px; font-size: 12px; font-weight: bold; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transform: translateX(100%); transition: transform 0.3s; display: flex; align-items: center; gap: 10px; } .toast.error { border-left-color: #ef4444; } .toast.show { transform: translateX(0); }
+        
+        /* Input file oculto para importar */
+        #file-input { display: none; }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <div class="profile-card"><div class="my-avatar" id="ui-avatar">?</div><div style="font-size: 14px; font-weight: bold; color: white;" id="ui-name-display">Jugador</div><div class="my-id-box" id="my-id-display" onclick="copyToClipboard(document.getElementById('my-id-display').textContent, 'ID Copiado')">CARGANDO...</div><div class="copy-tooltip">Clic para copiar</div></div>
+        <div class="profile-card">
+            <div class="my-avatar" id="ui-avatar">?</div>
+            <div style="font-size: 14px; font-weight: bold; color: white;" id="ui-name-display">Jugador</div>
+            <div class="my-id-box" id="my-id-display" onclick="copyToClipboard(document.getElementById('my-id-display').textContent, 'ID Copiado')">CARGANDO...</div>
+            <div class="copy-tooltip">Clic para copiar</div>
+            
+            <div class="profile-actions">
+                <button class="btn-icon" onclick="backupIdentity()" title="Guardar Identidad (Backup)">💾</button>
+                <button class="btn-icon" onclick="document.getElementById('file-input').click()" title="Cargar Identidad">📂</button>
+            </div>
+        </div>
+        
         <label>TU NOMBRE</label><input id="my-name" placeholder="Tu Nickname"><label>JUEGO</label><input id="my-game" value="Halo CE"><label>CONTRASEÑA SALA</label><input id="host-password" placeholder="Opcional" type="password" style="border-color: #a4d007;">
         <button id="btn-host" class="btn-host">CREAR SALA</button>
         <button onclick="fixNetwork()" style="margin-top:10px; background:transparent; border:1px solid #444; color:#888; width:100%; padding:8px; border-radius:4px; cursor:pointer; font-size:10px;">🚑 REPARAR CONEXIÓN JUEGO</button>
@@ -55,10 +76,12 @@
             <input type="checkbox" id="relay-toggle" onchange="toggleRelay()">
         </div>
     </div>
+    
     <div class="main-content">
         <div class="section-title"><span>SALAS PÚBLICAS</span><span id="server-status" style="font-size:11px;">Conectando...</span></div>
         <div id="lobby-list" class="lobby-list"></div>
     </div>
+    
     <div class="right-panel">
         <div class="friends-section"><div style="font-size: 11px; color: #666; font-weight: bold; margin-bottom: 10px;">AMIGOS</div><div class="add-friend-box"><input id="friend-code-input" placeholder="ID Amigo..." style="margin:0; font-size:11px;"><button class="btn-add" onclick="addFriend()">+</button></div><div id="friends-list"></div></div>
         <div class="chat-section">
@@ -74,9 +97,11 @@
             </div>
         </div>
     </div>
+    
     <div class="hidden"><input id="ip-virtual"><input id="puerto-local" value="5000"><input id="my-version" value="v1.0"></div>
     <div class="status-bar"><div style="display:flex; gap:10px; align-items:center;"><div id="ping-dot" style="width:8px; height:8px; background:#333; border-radius:50%;"></div><span id="log-text">Listo</span></div><div style="display:flex; gap:10px; align-items:center;"><span id="nat-status" style="font-weight:bold; color:#666; margin-right:10px; font-size:10px;">NAT: --</span><span style="color:#444">|</span><span id="route-type" style="font-size:10px; color:#666;">--</span><span style="color:#444">|</span><span id="turbo-icon" style="font-size:10px; color:#333; display:none;">⚡ TURBO LZ4</span><div id="traffic-led" style="width:6px; height:6px; background:#333; border-radius:50%;"></div></div></div>
     <div id="toast-container"></div>
+    <input type="file" id="file-input" accept=".mimic" onchange="restoreIdentity(this)">
 
     <script type="module">
         const invoke = window.__TAURI__.core.invoke; const listen = window.__TAURI__.event.listen; const SERVER_URL = "wss://mimic-signal.onrender.com"; 
@@ -88,7 +113,7 @@
         const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
         function playSound(t){if(audioCtx.state==='suspended')audioCtx.resume();const o=audioCtx.createOscillator();const g=audioCtx.createGain();o.connect(g);g.connect(audioCtx.destination);if(t==='msg'){o.type='sine';o.frequency.setValueAtTime(800,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(400,audioCtx.currentTime+0.1);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);o.start();o.stop(audioCtx.currentTime+0.1);}else if(t==='join'){o.type='triangle';o.frequency.setValueAtTime(440,audioCtx.currentTime);o.frequency.linearRampToValueAtTime(880,audioCtx.currentTime+0.2);g.gain.setValueAtTime(0.1,audioCtx.currentTime);g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.3);o.start();o.stop(audioCtx.currentTime+0.3);}}
 
-        // --- INIT ---
+        // --- INIT & PERSISTENCIA ---
         let myId=localStorage.getItem('mimic_id');if(!myId){myId='M-'+Math.random().toString(36).substr(2,6).toUpperCase();localStorage.setItem('mimic_id',myId);}
         document.getElementById('my-id-display').textContent=myId;
         const myAutoIp=(()=>{let h=0;for(let i=0;i<myId.length;i++)h=myId.charCodeAt(i)+((h<<5)-h);return`10.10.10.${(Math.abs(h)%253)+2}`;})();
@@ -104,6 +129,45 @@
         window.handleChat=(e)=>{if(e.key==='Enter'){const i=document.getElementById('chat-input');const t=i.value.trim();if(t){ws.send(JSON.stringify({type:'CHAT',sender:savedName,text:t}));i.value="";}}};
         function addChatMessage(s,t,sys=false){const b=document.getElementById('chat-box');const d=document.createElement('div');d.className="msg";if(sys)d.innerHTML=`<div class="sys-msg">${t}</div>`;else d.innerHTML=`<span class="msg-sender">${s}:</span><span class="msg-text">${t}</span>`;b.appendChild(d);b.scrollTop=b.scrollHeight;}
         
+        // --- MIMIC PASSPORT (BACKUP & RESTORE) ---
+        window.backupIdentity = () => {
+            const data = {
+                id: localStorage.getItem('mimic_id'),
+                name: localStorage.getItem('mimic_name'),
+                friends: localStorage.getItem('mimic_friends'),
+                pwd: localStorage.getItem('mimic_last_pwd')
+            };
+            const blob = new Blob([JSON.stringify(data)], {type: "application/json"});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `mimic_identity_${data.name}.mimic`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            showToast("Identidad exportada 💾", "success");
+        };
+
+        window.restoreIdentity = (input) => {
+            const file = input.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if(data.id) localStorage.setItem('mimic_id', data.id);
+                    if(data.name) localStorage.setItem('mimic_name', data.name);
+                    if(data.friends) localStorage.setItem('mimic_friends', data.friends);
+                    if(data.pwd) localStorage.setItem('mimic_last_pwd', data.pwd);
+                    showToast("Identidad restaurada. Reiniciando...", "success");
+                    setTimeout(() => location.reload(), 1500);
+                } catch(err) {
+                    showToast("Archivo corrupto o inválido", "error");
+                }
+            };
+            reader.readAsText(file);
+        };
+
         // --- LOGICA HÍBRIDA + STUN ---
         async function getMyLocalIp() { try { myLocalIp = await invoke("obtener_ip_local_cmd"); console.log("Mi Local IP:", myLocalIp); } catch(e){} }
         listen('stun-result', (event) => { const [ip, port] = event.payload; console.log("STUN:", ip, port); myStunPort = port; myPublicIp = ip; showToast(`NAT Abierta (Puerto ${port})`, "info"); });
@@ -138,22 +202,18 @@
             if(r.includes("ÉXITO")){s.textContent="NAT: ABIERTA";s.style.color="#a4d007";}else{s.textContent="NAT: MODERADA";s.style.color="#f97316";}
             }catch(e){s.textContent="NAT: ESTRICTA";s.style.color="#ef4444";}
         }
-        
-        // --- HERRAMIENTAS AVANZADAS ---
         window.fixNetwork = async () => { showToast("🔧 Ajustando prioridades...", "info"); try { const r = await invoke("forzar_prioridad"); showToast(r, "success"); playSound('join'); } catch(e) { showToast("Error", "error"); } };
 
         window.toggleRelay = async () => {
             const isChecked = document.getElementById('relay-toggle').checked;
             if (isChecked) {
-                // NOTA: Para producción real, cambia '127.0.0.1' por la IP pública de tu VPS donde corre server.js
-                // Usamos 127.0.0.1 para pruebas locales si tienes el servidor en tu PC
-                const relayServer = "127.0.0.1:10000"; 
+                const relayServer = "127.0.0.1:10000"; // CAMBIAR POR TU IP PÚBLICA REAL DEL SERVIDOR
                 try {
                     const res = await invoke("activar_relay", { serverIp: relayServer, miIpVirtual: myAutoIp });
                     showToast(res, "success");
                 } catch(e) { showToast("Error activando Relay", "error"); }
             } else {
-                showToast("Reinicia la app para desactivar Relay", "info");
+                showToast("Reinicia para desactivar Relay", "info");
             }
         };
 
@@ -196,11 +256,11 @@
             } catch(e) {}
         }, 5000);
 
-        // --- WEBSOCKET CON RECONEXIÓN INTELIGENTE ---
+        // --- WEBSOCKET CON RECONEXIÓN ---
         function connect() {
             document.getElementById('server-status').textContent="Conectando..."; ws=new WebSocket(SERVER_URL);
             ws.onopen=async ()=>{ 
-                reconnectAttempts = 0; // Reset
+                reconnectAttempts = 0; 
                 document.getElementById('server-status').textContent="EN LÍNEA";document.getElementById('server-status').style.color="#a4d007"; 
                 await getMyLocalIp(); 
                 sendLogin(); 
@@ -220,15 +280,9 @@
                 vpnStarted=false;
                 document.getElementById('server-status').textContent="DESCONECTADO";
                 document.getElementById('server-status').style.color="#ef4444";
-                
-                // Estrategia Exponential Backoff
-                let delay = Math.min(2000 * (reconnectAttempts + 1), 30000); // Max 30s
+                let delay = Math.min(2000 * (reconnectAttempts + 1), 30000); 
                 showToast(`⚠️ Sin conexión. Reintentando en ${delay/1000}s...`, "error");
-                
-                setTimeout(() => {
-                    reconnectAttempts++;
-                    connect();
-                }, delay);
+                setTimeout(() => { reconnectAttempts++; connect(); }, delay);
             };
         }
         function sendLogin(){ws.send(JSON.stringify({type:'LOGIN',id:myId,name:document.getElementById('my-name').value,virtualIp:myAutoIp, localIp: myLocalIp}));}
