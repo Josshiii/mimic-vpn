@@ -5,33 +5,35 @@ description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# --- CORE TAURI (CON TRAY ACTIVADO) ---
+# Aquí activamos "tray-icon" para que funcione el menú de sistema
+tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+
+# --- UTILIDADES DE ARCHIVOS (FALTABAN ESTAS) ---
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+rfd = "0.14"  # Para abrir el selector de archivos
+dirs = "5.0"  # Para encontrar la carpeta de descargas
 
-# --- DEPENDENCIAS DE MIMIC HUB ---
-# Red y VPN
+# --- RED Y VPN ---
 socket2 = "0.5"
 wintun = "0.3" 
-x25519-dalek = "2.0"
+# AQUÍ ACTIVAMOS "static_secrets" PARA QUE FUNCIONE LA ENCRIPTACIÓN
+x25519-dalek = { version = "2.0", features = ["static_secrets", "getrandom"] }
 chacha20poly1305 = "0.10"
 rand = "0.8"
 base64 = "0.21"
 lz4_flex = "0.11"
-igd-next = "0.14" # UPnP
+igd-next = "0.14" 
 byteorder = "1.5"
 
-# Sistema y Procesos
-sysinfo = "0.30" # Detección de Juegos
-discord-rich-presence = "0.2" # Estado de Discord
-
-# --- EL NUEVO PLUGIN QUE FALTABA ---
-tauri-plugin-updater = "2" # <--- ESTO ARREGLA EL ERROR
-tauri-plugin-process = "2"
+# --- SISTEMA ---
+sysinfo = "0.30" 
+discord-rich-presence = "0.2"
