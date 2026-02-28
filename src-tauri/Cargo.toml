@@ -21,6 +21,8 @@ byteorder = "1.5"
 
 sysinfo = "0.30"
 
+discord-rich-presence = "0.2"
+
 # RED Y VPN
 wintun = "0.4"
 igd-next = "0.14"
