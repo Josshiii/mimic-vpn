@@ -9,23 +9,24 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# --- CORE TAURI (CON TRAY ACTIVADO) ---
-# Aquí activamos "tray-icon" para que funcione el menú de sistema
+# CORE
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# ESTA ES LA LIBRERÍA DE DEEP LINK (LINKS MÁGICOS)
+tauri-plugin-deep-link = "2" 
 
-# --- UTILIDADES DE ARCHIVOS (FALTABAN ESTAS) ---
+# UTILIDADES
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-rfd = "0.14"  # Para abrir el selector de archivos
-dirs = "5.0"  # Para encontrar la carpeta de descargas
+rfd = "0.14"
+dirs = "5.0"
+lazy_static = "1.4" # <--- ESTA FALTABA PARA LA MEMORIA GLOBAL
 
-# --- RED Y VPN ---
+# RED
 socket2 = "0.5"
 wintun = "0.3" 
-# AQUÍ ACTIVAMOS "static_secrets" PARA QUE FUNCIONE LA ENCRIPTACIÓN
 x25519-dalek = { version = "2.0", features = ["static_secrets", "getrandom"] }
 chacha20poly1305 = "0.10"
 rand = "0.8"
@@ -34,6 +35,6 @@ lz4_flex = "0.11"
 igd-next = "0.14" 
 byteorder = "1.5"
 
-# --- SISTEMA ---
+# SISTEMA
 sysinfo = "0.30" 
 discord-rich-presence = "0.2"
