@@ -3,6 +3,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use std::time::Instant; // Necesario para QoS
 use tauri::Emitter;
 use std::os::windows::process::CommandExt;
 use std::collections::HashMap; 
@@ -31,7 +32,7 @@ const FILE_PORT: u16 = 4444;
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 
-// --- 1. GENERAR LLAVES ---
+// --- UTILIDADES CRIPTO ---
 #[tauri::command]
 fn generar_identidad() -> (String, String) {
     let mut secret_bytes = [0u8; 32];
@@ -41,7 +42,6 @@ fn generar_identidad() -> (String, String) {
     (general_purpose::STANDARD.encode(secret.to_bytes()), general_purpose::STANDARD.encode(public.to_bytes()))
 }
 
-// --- 2. CALCULAR SECRETO ---
 #[tauri::command]
 fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     let priv_bytes = general_purpose::STANDARD.decode(mi_privada).unwrap_or(vec![0; 32]);
@@ -53,7 +53,7 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
     general_purpose::STANDARD.encode(shared_secret.as_bytes())
 }
 
-// --- UTILIDADES ---
+// --- UTILIDADES SISTEMA ---
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
 
 fn optimizar_windows(p: &str) { 
@@ -70,7 +70,7 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// --- ARCHIVOS ---
+// --- SISTEMA DE ARCHIVOS ---
 fn obtener_ruta_unica(ruta: PathBuf) -> PathBuf {
     if !ruta.exists() { return ruta; }
     let stem = ruta.file_stem().unwrap().to_string_lossy().to_string();
@@ -237,31 +237,47 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let socket_out = socket_local.try_clone().unwrap(); let cipher_out = cipher.clone(); let app_out = app_handle.clone(); let session_out = session_arc.clone();
     
     thread::spawn(move || {
+        // --- QoS: VARIABLES DE CONTROL ---
+        let mut last_tcp_packet = Instant::now(); // Cronómetro para frenar TCP
+        
         loop {
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
                     
-                    // --- AQUÍ ESTÁ LA MAGIA DEL SERVICE DISCOVERY ---
+                    // --- QoS: ANTI-LAG SYSTEM ---
+                    // Inspeccionamos la cabecera IPv4 para ver qué tipo de paquete es
+                    if bytes.len() > 20 {
+                        // El byte 9 en IPv4 es el "Protocolo"
+                        // 0x06 (6) = TCP (Archivos, HTTP) -> BAJA PRIORIDAD
+                        // 0x11 (17) = UDP (Juegos, VoIP) -> ALTA PRIORIDAD
+                        let protocol = bytes[9];
+                        
+                        if protocol == 6 { // Es TCP (Archivo)
+                            // Aplicamos un micro-freno si estamos enviando muy rápido
+                            // Esto evita que TCP se coma todo el ancho de banda
+                            if last_tcp_packet.elapsed().as_micros() < 500 {
+                                // Si han pasado menos de 500 microsegundos, esperamos un poco
+                                thread::sleep(Duration::from_micros(200));
+                            }
+                            last_tcp_packet = Instant::now();
+                        }
+                        // Si es UDP (Juegos), NO HACEMOS NADA. Pasa directo a máxima velocidad.
+                    }
+                    // -----------------------------
+
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
                         
-                        // 1. Detectar si es Broadcast (255)
                         let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
-                        
-                        // 2. Detectar si es Multicast (224.0.0.0 - 239.255.255.255)
-                        // El primer byte de Multicast está entre 224 y 239
                         let first_byte = bytes[16];
                         let is_multicast = first_byte >= 224 && first_byte <= 239;
 
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
-                                    // ¡REPETIDOR ACTIVADO!
-                                    // Si alguien grita, se lo enviamos a TODOS los amigos conectados.
                                     for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
                                 } else { 
-                                    // Tráfico Normal (Unicast)
                                     if let Some(t) = table.get(&dest_ip) { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
                                     else { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } 
                                 }
@@ -280,7 +296,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN COMPLETA ACTIVA".to_string()
+    "VPN E2EE + QoS ACTIVA".to_string()
 }
 
 // --- SYSTEM TRAY ---
