@@ -11,7 +11,7 @@ use std::io::{Read, Write, Cursor};
 use std::path::{Path, PathBuf};
 use byteorder::{BigEndian, ReadBytesExt}; 
 
-// Librerías externas (Ahora funcionarán porque están en Cargo.toml)
+// DEPENDENCIAS
 use x25519_dalek::{PublicKey, StaticSecret}; 
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce}; 
 use chacha20poly1305::aead::{Aead, KeyInit}; 
@@ -23,7 +23,6 @@ use igd_next::PortMappingProtocol;
 use sysinfo::System;
 use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
 
-// Constantes
 const TUNEL_MASK: &str = "255.255.255.0";
 const NOMBRE_ADAPTADOR: &str = "MimicVPN";
 const HEARTBEAT_MSG: &[u8] = b"__MIMIC_PING__"; 
@@ -34,18 +33,19 @@ const FILE_PORT: u16 = 4444;
 const STUN_SERVER: &str = "stun.l.google.com:19302";
 const DISCORD_CLIENT_ID: &str = "1219918880000000000"; 
 
-// Estado Global
 static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
 
-// --- SEGURIDAD ---
+// --- SEGURIDAD: MIMIC SHIELD ---
 fn es_paquete_seguro(packet: &[u8]) -> bool {
     if packet.len() < 20 { return false; }
     let protocol = packet[9];
-    if protocol != 6 && protocol != 17 && protocol != 1 { return false; }
-    if protocol == 6 || protocol == 17 {
+    // Permitir IGMP (2) para Multicast real
+    if protocol != 6 && protocol != 17 && protocol != 1 && protocol != 2 { return false; }
+    
+    if protocol == 6 || protocol == 17 { // TCP o UDP
         if packet.len() < 24 { return false; } 
         let dest_port = ((packet[22] as u16) << 8) | (packet[23] as u16);
         match dest_port {
@@ -77,19 +77,28 @@ fn actualizar_discord(estado: &str, detalles: &str) {
     }
 }
 
-// --- OPTIMIZACIÓN ---
+// --- OPTIMIZACIÓN NUCLEAR DE WINDOWS ---
 fn optimizar_windows_nuclear(puerto_udp: &str) { 
+    // 1. Prioridad Máxima a la Interfaz
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // 2. Permitir todo el tráfico en la VPN (Shield lo filtra antes, así que es seguro abrir el firewall aquí)
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Allow-All-VPN\"", "dir=in", "action=allow", "profile=any", &format!("localip=any remoteip=any interface=\"{}\"", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // 3. SECUESTRO DE MULTICAST (CRÍTICO PARA MINECRAFT)
+    // Forzamos a Windows a enviar los paquetes 224.0.0.0 por nuestra interfaz
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
+
+    // 4. Abrir puerto UDP local
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", &format!("name=\"MimicHub-UDP-{}\"", puerto_udp), "dir=in", "action=allow", "protocol=UDP", &format!("localport={}", puerto_udp)]).creation_flags(CREATE_NO_WINDOW).output();
 }
 
 #[tauri::command]
-fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Tráfico de Juegos Forzado".to_string() }
+fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Conectividad Reparada (Multicast OK)".to_string() }
 
-// --- COMANDOS TAURI ---
+// --- FUNCIONES CORE ---
 #[tauri::command]
 fn detectar_juego() -> String {
     let mut s = System::new_all(); s.refresh_all(); 
@@ -162,18 +171,24 @@ fn calcular_secreto(mi_privada: String, su_publica: String) -> String {
 
 fn inicializar_tabla() { let mut t = ROUTING_TABLE.lock().unwrap(); *t = Some(HashMap::new()); }
 
+// --- MOTOR DE ENVÍO DE PAQUETES ---
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
         let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
+        
         if let Some(relay_ip) = relay_target {
+            // Modo Relay
             if let Ok(ip_addr) = destino.parse::<Ipv4Addr>() {
                 let mut relay_packet = ip_addr.octets().to_vec(); relay_packet.extend_from_slice(&final_packet);
                 let _ = socket.send_to(&relay_packet, relay_ip);
             }
-        } else { let _ = socket.send_to(&final_packet, destino); }
+        } else {
+            // Modo Directo
+            let _ = socket.send_to(&final_packet, destino);
+        }
     }
 }
 
@@ -222,15 +237,15 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         loop {
             if let Ok((size, _)) = socket.recv_from(&mut buffer) {
                 packet_count += 1;
-                if packet_count > 5000 { 
-                    if last_second.elapsed().as_secs() < 1 { continue; } else { packet_count = 0; last_second = Instant::now(); }
-                }
+                if packet_count > 5000 { if last_second.elapsed().as_secs() < 1 { continue; } else { packet_count = 0; last_second = Instant::now(); } }
                 if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
+                
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         if let Ok(original) = decompress_size_prepended(&decrypted) {
                             if !es_paquete_seguro(&original) { continue; }
+                            
                             if original == HEARTBEAT_MSG { let _ = app_handle.emit("evento-ping", ()); } 
                             else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original.len() as u16) {
@@ -247,10 +262,8 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
 }
 
 fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
-
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
-
 #[tauri::command]
 fn enviar_archivo(ip_destino: String) -> String {
     let file = rfd::FileDialog::new().set_title("Selecciona archivo").pick_file();
@@ -271,7 +284,6 @@ fn enviar_archivo(ip_destino: String) -> String {
         return "Enviando...".to_string();
     } "Cancelado".to_string()
 }
-
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
@@ -282,7 +294,6 @@ fn intentar_upnp(puerto_interno: u16) -> String {
         }, Err(_) => "Router no responde".to_string()
     }
 }
-
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { 
@@ -298,12 +309,10 @@ fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
         } 
     } "Error".to_string()
 }
-
 #[tauri::command]
 fn generar_clave_segura() -> String {
     let mut key = [0u8; 32]; rand::thread_rng().fill_bytes(&mut key); general_purpose::STANDARD.encode(key)
 }
-
 #[tauri::command]
 fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
     if let Ok(mut guard) = RELAY_ADDRESS.lock() { *guard = Some(server_ip.clone()); }
@@ -319,10 +328,11 @@ fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
     "MODO RELAY ACTIVADO 🛡️".to_string()
 }
 
+// --- VPN ENGINE PRINCIPAL (CON REPETIDOR DE BROADCAST) ---
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
-    actualizar_discord("Conectado a Mimic Hub", "Modo Seguro Activo 🛡️"); 
+    actualizar_discord("Conectado a Mimic Hub", "Modo Universal 🌍"); 
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave mal".to_string() };
     if key_bytes.len() != 32 { return "Longitud mal".to_string(); }
     let key = Key::from_slice(&key_bytes); let cipher = Arc::new(ChaCha20Poly1305::new(key));
@@ -347,6 +357,8 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             match session_out.receive_blocking() {
                 Ok(packet) => {
                     let bytes = packet.bytes();
+                    
+                    // QoS (Prioridad TCP)
                     if bytes.len() > 20 {
                         let protocol = bytes[9];
                         if protocol == 6 { 
@@ -354,18 +366,33 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                             last_tcp_packet = Instant::now();
                         }
                     }
+
                     if bytes.len() >= 20 { 
                         let dest_ip = format!("{}.{}.{}.{}", bytes[16], bytes[17], bytes[18], bytes[19]);
-                        let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
+                        
+                        // --- AQUÍ ESTÁ LA MAGIA DEL REPETIDOR ---
+                        // Detectamos si es Broadcast (255.255.255.255) o Multicast (224.x.x.x)
                         let first_byte = bytes[16];
+                        let is_broadcast = dest_ip == "255.255.255.255" || dest_ip.ends_with(".255");
                         let is_multicast = first_byte >= 224 && first_byte <= 239;
+
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
-                                    for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
+                                    // ¡BINGO! Es Minecraft buscando partida.
+                                    // ENVIAMOS COPIA A TODOS LOS AMIGOS (FLOOD)
+                                    for t in table.values() { 
+                                        enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); 
+                                    } 
                                 } else { 
-                                    if let Some(t) = table.get(&dest_ip) { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
-                                    else { for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } } 
+                                    // Tráfico normal (Unicast)
+                                    if let Some(t) = table.get(&dest_ip) { 
+                                        enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); 
+                                    } else { 
+                                        // Fallback por si acaso: si no lo encontramos, lo enviamos a todos
+                                        // Esto ayuda si la tabla de enrutamiento tiene errores
+                                        for t in table.values() { enviar_paquete_turbo(&socket_out, t, bytes, &cipher_out); } 
+                                    } 
                                 }
                                 if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
@@ -382,10 +409,9 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
             if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
         }
     });
-    "VPN BLINDADA ACTIVA".to_string()
+    "VPN UNIVERSAL (BROADCAST + RELAY) ACTIVA".to_string()
 }
 
-// --- SYSTEM TRAY ---
 use tauri::{menu::{Menu, MenuItem}, tray::{MouseButton, TrayIconBuilder, TrayIconEvent}, Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -400,29 +426,10 @@ pub fn run() {
         ])
         .setup(|app| {
             conectar_discord(); 
-            // MENÚ DEL SYSTEM TRAY (Ícono en la barra)
             let quit_i = MenuItem::with_id(app, "quit", "Salir de Mimic Hub", true, None::<&str>)?;
             let show_i = MenuItem::with_id(app, "show", "Mostrar Ventana", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
-            
-            // CONFIGURACIÓN DEL TRAY
-            let _tray = TrayIconBuilder::with_id("tray")
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(|app, event| { 
-                    match event.id.as_ref() { 
-                        "quit" => app.exit(0), 
-                        "show" => if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }, 
-                        _ => {} 
-                    } 
-                })
-                .on_tray_icon_event(|tray, event| { 
-                    if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event { 
-                        let app = tray.app_handle(); 
-                        if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } 
-                    } 
-                })
-                .build(app)?;
+            let _tray = TrayIconBuilder::with_id("tray").icon(app.default_window_icon().unwrap().clone()).menu(&menu).on_menu_event(|app, event| { match event.id.as_ref() { "quit" => app.exit(0), "show" => if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); }, _ => {} } }).on_tray_icon_event(|tray, event| { if let TrayIconEvent::Click { button: MouseButton::Left, .. } = event { let app = tray.app_handle(); if let Some(window) = app.get_webview_window("main") { let _ = window.show(); let _ = window.set_focus(); } } }).build(app)?;
             Ok(())
         })
         .on_window_event(|window, event| { if let WindowEvent::CloseRequested { api, .. } = event { window.hide().unwrap(); api.prevent_close(); } })
