@@ -111,12 +111,10 @@
         }
         checkForUpdates();
 
-        // --- DEEP LINK LISTENER (NUEVO) ---
         listen('open-url', (event) => {
             const url = event.payload;
             console.log("🔗 Link:", url);
             try {
-                // mimic://join/CODE?pwd=PASS
                 const clean = url.replace("mimic://", "").replace(/\/$/, "");
                 const [action, data] = clean.split('/');
                 if (action === "join" && data) {
@@ -124,12 +122,11 @@
                     const params = new URLSearchParams(query);
                     const pwd = params.get('pwd') || "";
                     showToast(`🔗 Enlace detectado: ${code}`, "info");
-                    window.join(code, false, pwd); // Join automático
+                    window.join(code, false, pwd);
                 }
             } catch(e) { showToast("Enlace inválido", "error"); }
         });
 
-        // UTILS
         window.showToast=(m,t="info")=>{const c=document.getElementById('toast-container');const e=document.createElement('div');e.className=`toast ${t}`;e.innerHTML=`<span>${t==='error'?'⚠️':'✅'}</span><span>${m}</span>`;c.appendChild(e);setTimeout(()=>e.classList.add('show'),10);setTimeout(()=>{e.classList.remove('show');setTimeout(()=>e.remove(),300);},3000);};
         window.copyToClipboard=(t,m)=>{navigator.clipboard.writeText(t);showToast(m||"Copiado");};
         const audioCtx=new(window.AudioContext||window.webkitAudioContext)();
@@ -185,6 +182,7 @@
 
         window.sendFile=async(ip)=>{if(ip==="Offline")return;try{showToast("Selecciona archivo...","info");const r=await invoke("enviar_archivo",{ipDestino:ip});if(r.includes("Enviando"))showToast("📤 Enviando...","info");}catch(e){}};
         listen('archivo-recibido',(e)=>{playSound('join');showToast(`📥 Recibido: ${e.payload}`,"info");});
+        listen('server-log', (e) => { console.log(e.payload); }); // Log del backend para debug
 
         async function startVpnEngine(sharedKey) {
             if(vpnStarted) return;
@@ -200,11 +198,18 @@
         async function checkNat() { try{ const p=parseInt(document.getElementById('puerto-local').value); await invoke("intentar_upnp",{puertoInterno:p}); document.getElementById('nat-status').textContent="NAT: ABIERTA"; }catch(e){} }
         
         window.fixNetwork = async () => { showToast("🔧 Ajustando prioridades...", "info"); try { const r = await invoke("forzar_prioridad"); showToast(r, "success"); playSound('join'); } catch(e) { showToast("Error", "error"); } };
+        
+        // --- AQUÍ ESTÁ LA MAGIA DEL RELAY ---
         window.toggleRelay = async () => {
             const isChecked = document.getElementById('relay-toggle').checked;
             if (isChecked) {
-                const relayServer = "127.0.0.1:10000"; 
-                try { const res = await invoke("activar_relay", { serverIp: relayServer, miIpVirtual: myAutoIp }); showToast(res, "success"); } catch(e) { showToast("Error Relay", "error"); }
+                // TU RELAY PÚBLICO (PLAYIT.GG)
+                const relayServer = "device-mike.gl.at.ply.gg:17418"; 
+                try { 
+                    const res = await invoke("activar_relay", { serverIp: relayServer, miIpVirtual: myAutoIp }); 
+                    showToast("🌐 Conectando a Relay...", "info");
+                    showToast(res, "success"); 
+                } catch(e) { showToast("Error Relay", "error"); }
             } else { showToast("Reinicia para desactivar", "info"); }
         };
 
@@ -219,6 +224,19 @@
         listen('stats-entrada',(e)=>{const[n,g]=e.payload;bin+=n;bout+=g;animateLed(); trafficHistory.push(n); trafficHistory.shift(); drawGraph(); });
         listen('stats-salida',(e)=>{const n = e.payload; animateLed(); trafficHistory.push(n); trafficHistory.shift(); drawGraph(); });
         function animateLed(){const l=document.getElementById('traffic-led');l.style.background="#a4d007";setTimeout(()=>{l.style.background="#333";},50);}
+        listen('evento-ping', (e) => { 
+            const msg = e.payload;
+            if(msg.includes("INSEGURO")) document.getElementById('ping-display').style.color = "red";
+            else document.getElementById('ping-display').style.color = "#a4d007";
+            document.getElementById('ping-display').textContent = Math.floor(Math.random() * 20 + 30) + " ms"; // Simulación visual activa cuando llega paquete
+            
+            // Efecto visual en el punto
+            const dot = document.getElementById('ping-dot');
+            dot.style.background = "#a4d007";
+            dot.style.boxShadow = "0 0 8px #a4d007";
+            setTimeout(() => { dot.style.background = "#333"; dot.style.boxShadow = "none"; }, 100);
+        });
+
         setInterval(async () => {
             try { const g = await invoke("detectar_juego"); if(g && g!==document.getElementById('my-game').value) { document.getElementById('my-game').value=g; if(ws.readyState===1) sendLogin(); showToast(`🎮 Juego: ${g}`,"info"); } } catch(e){}
         }, 5000);
@@ -254,10 +272,9 @@
             ws.send(JSON.stringify({type:'HOST',room:code,hostName:document.getElementById('my-name').value,gameName:document.getElementById('my-game').value,payload:portToSend,virtualIp:myAutoIp,localIp:myLocalIp,password:pwd,publicKey:keys[1], isPrivate: isPrivate}));
             document.getElementById('log-text').textContent="Esperando..."; document.getElementById('btn-host').disabled=true; enableChat();
             
-            // GENERAR ENLACE DEEP LINK
             let inviteLink = `mimic://join/${code}`;
             if(pwd) inviteLink += `?pwd=${pwd}`;
-            copyToClipboard(inviteLink, "🔗 Enlace Copiado"); // COPIA EL LINK, NO EL CÓDIGO
+            copyToClipboard(inviteLink, "🔗 Enlace Copiado");
             amIHost = true;
         });
         
