@@ -33,7 +33,9 @@ const FILE_PORT: u16 = 4444;
 const STUN_SERVER: &str = "stun.l.google.com:19302";
 const DISCORD_CLIENT_ID: &str = "1219918880000000000"; 
 
-static ROUTING_TABLE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+// --- CAMBIO CRÍTICO: La tabla ahora guarda una LISTA de direcciones (Vec<String>) ---
+static ROUTING_TABLE: Mutex<Option<HashMap<String, Vec<String>>>> = Mutex::new(None);
+
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
 static RELAY_ADDRESS: Mutex<Option<String>> = Mutex::new(None);
@@ -51,25 +53,41 @@ fn es_paquete_seguro(packet: &[u8]) -> bool {
     true
 }
 
-// ... (Funciones de envío Smart y Turbo IGUALES) ...
-fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, ip_real_destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
+// --- ENGINE ESCOPETA (MULTIPATH) ---
+// Envía el paquete a TODAS las direcciones conocidas del usuario (LAN y WAN)
+fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, rutas_destino: &Vec<String>, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
+    
     if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
-        let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
+        let mut final_packet = nonce_bytes.to_vec(); 
+        final_packet.extend_from_slice(&encrypted_msg);
+        
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
-        let ultima_vez = { let guard = PEER_LAST_SEEN.lock().unwrap(); guard.get(ip_real_destino).cloned() };
-        let p2p_activo = match ultima_vez { Some(t) => t.elapsed().as_secs() < 8, None => false };
-        if p2p_activo || relay_target.is_none() { let _ = socket.send_to(&final_packet, ip_real_destino); }
-        if !p2p_activo && relay_target.is_some() {
+        
+        // 1. ESTRATEGIA ESCOPETA: Disparar a todas las rutas conocidas (LAN + WAN)
+        // Esto garantiza que si una falla, la otra llegue.
+        let mut enviado_p2p = false;
+        
+        for endpoint in rutas_destino {
+            if let Ok(_) = socket.send_to(&final_packet, endpoint) {
+                enviado_p2p = true;
+            }
+        }
+
+        // 2. FALLBACK RELAY (Solo si no pudimos enviar nada P2P, aunque con Render esto no funciona)
+        if !enviado_p2p && relay_target.is_some() {
             let relay_ip = relay_target.unwrap();
             if let Ok(ip_addr) = ip_virtual_destino.parse::<Ipv4Addr>() {
-                let mut relay_packet = ip_addr.octets().to_vec(); relay_packet.extend_from_slice(&final_packet);
+                let mut relay_packet = ip_addr.octets().to_vec(); 
+                relay_packet.extend_from_slice(&final_packet);    
                 let _ = socket.send_to(&relay_packet, relay_ip);
             }
         }
     }
 }
+
+// Helper para Heartbeat (Escopeta también)
 fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
@@ -79,7 +97,7 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// ... (Discord y utilidades IGUALES) ...
+// ... (Resto de funciones utilitarias IGUALES) ...
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -100,21 +118,13 @@ fn actualizar_discord(estado: &str, detalles: &str) {
     }
 }
 
-// --- OPTIMIZACIÓN NUCLEAR MEJORADA ---
 fn optimizar_windows_nuclear(puerto_udp: &str) { 
-    // 1. Exclusión Defender
     let _ = Command::new("powershell").args(&["-Command", "Add-MpPreference -ExclusionProcess 'mimic-app.exe' -ErrorAction SilentlyContinue"]).creation_flags(CREATE_NO_WINDOW).output();
-    // 2. MTU
     let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
-    // 3. Red Privada
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    // 4. Métrica
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
-    // 5. Firewall Global (UDP Entrada Total)
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Core-In\"", "dir=in", "action=allow", "protocol=UDP", "localport=any", "remoteport=any"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Core-Out\"", "dir=out", "action=allow", "protocol=UDP", "localport=any", "remoteport=any"]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // 6. Multicast
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
 }
@@ -224,7 +234,6 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
     });
 }
 
-// --- ENGINE PRINCIPAL ---
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -232,26 +241,16 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         let mut last_second = Instant::now();
         loop {
             if let Ok((size, src_addr)) = socket.recv_from(&mut buffer) {
-                // DEBUG: ¿Llegan los paquetes?
-                if size == HOLE_PUNCH_MSG.len() {
-                    // println!("👊 Hole Punch recibido de {}", src_addr);
-                } else {
-                    // println!("📦 Datos recibidos de {} ({} bytes)", src_addr, size);
-                }
-
                 let src_ip_str = src_addr.to_string();
                 { let mut guard = PEER_LAST_SEEN.lock().unwrap(); guard.insert(src_ip_str, Instant::now()); }
-                
                 packet_count += 1;
                 if packet_count > 5000 { if last_second.elapsed().as_secs() < 1 { continue; } else { packet_count = 0; last_second = Instant::now(); } }
                 if size == HOLE_PUNCH_MSG.len() && &buffer[..size] == HOLE_PUNCH_MSG { continue; }
-                
                 if size > 12 {
                     let nonce = Nonce::from_slice(&buffer[..12]); let ciphertext = &buffer[12..size];
                     if let Ok(decrypted) = cipher.decrypt(nonce, ciphertext) {
                         if let Ok(original) = decompress_size_prepended(&decrypted) {
                             if !es_paquete_seguro(&original) { continue; }
-                            
                             if original == HEARTBEAT_MSG { let _ = app_handle.emit("evento-ping", ()); } 
                             else {
                                 if let Ok(mut packet) = session.allocate_send_packet(original.len() as u16) {
@@ -290,50 +289,33 @@ fn enviar_archivo(ip_destino: String) -> String {
         return "Enviando...".to_string();
     } "Cancelado".to_string()
 }
-
-// --- FUNCIÓN UPnP (AUTO PORT FORWARDING) ---
 #[tauri::command]
 fn intentar_upnp(puerto_interno: u16) -> String {
     let local_ip = match obtener_ip_local() { Some(ip) => ip, None => return "Error IP".to_string() };
-    // Intentar abrir el puerto en el router automáticamente
     match search_gateway(Default::default()) {
         Ok(gateway) => {
             let local_socket = SocketAddrV4::new(local_ip, puerto_interno);
-            // Intentar mapear puerto externo aleatorio al puerto interno fijo
-            // O mejor, usar el mismo puerto si es posible
-            match gateway.add_port(PortMappingProtocol::UDP, puerto_interno, SocketAddr::V4(local_socket), 0, "MimicHub-UDP") { 
-                Ok(_) => {
-                    // println!("✅ UPnP Exitoso: Puerto {} abierto", puerto_interno);
-                    format!("ÉXITO UPnP")
-                }, 
-                Err(e) => format!("FALLO UPnP: {}", e) 
-            }
+            match gateway.add_port(PortMappingProtocol::UDP, puerto_interno, SocketAddr::V4(local_socket), 0, "MimicHub-UDP") { Ok(_) => format!("ÉXITO UPnP"), Err(e) => format!("FALLO UPnP: {}", e) }
         }, Err(_) => "Router no responde".to_string()
     }
 }
 
-// --- PERFORADORA INDUSTRIAL (BURST MODE) ---
+// --- FIX DE CONEXIÓN: AGREGAR PEER SIN SOBREESCRIBIR ---
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { 
         if let Some(table) = guard.as_mut() { 
-            table.insert(ip_virtual, ip_destino.clone()); 
+            // 1. SI LA IP NO EXISTE, CREAR LISTA. SI EXISTE, AÑADIR.
+            // Esto evita que la IP Local borre a la Pública.
+            table.entry(ip_virtual).or_insert(Vec::new()).push(ip_destino.clone());
+            
             if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
                 if let Some(socket) = socket_guard.as_ref() {
                     let target = ip_destino.clone(); let s_clone = socket.try_clone().unwrap();
-                    
-                    // LÓGICA DE PERFORACIÓN AGRESIVA
+                    // 2. PERFORADORA INDUSTRIAL (Ráfaga para romper NAT)
                     thread::spawn(move || {
-                        // Ráfaga rápida (romper NAT)
-                        for _ in 0..20 { 
-                            let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); 
-                            thread::sleep(Duration::from_millis(50)); 
-                        }
-                        // Mantenimiento
-                        for _ in 0..10 {
-                            let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); 
-                            thread::sleep(Duration::from_millis(500)); 
-                        }
+                        for _ in 0..20 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(50)); }
+                        for _ in 0..10 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(500)); }
                     });
                 }
             }
@@ -372,16 +354,10 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let adapter = wintun::Adapter::create(&wintun, "MimicV2", NOMBRE_ADAPTADOR, None).unwrap();
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
-    
-    // 1. OPTIMIZAR WINDOWS
     optimizar_windows_nuclear(&puerto_local);
     
-    // 2. ACTIVAR UPnP AUTOMÁTICAMENTE (NUEVO FIX CRÍTICO)
-    if let Ok(p) = puerto_local.parse::<u16>() {
-        thread::spawn(move || {
-            let _ = intentar_upnp(p);
-        });
-    }
+    // UPnP AUTOMÁTICO (CRÍTICO PARA RENDER)
+    if let Ok(p) = puerto_local.parse::<u16>() { thread::spawn(move || { let _ = intentar_upnp(p); }); }
 
     iniciar_receptor_archivos(app_handle.clone());
     let socket_local = UdpSocket::bind(format!("0.0.0.0:{}", puerto_local)).unwrap();
@@ -406,10 +382,14 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
-                                    for (vip, endpoint) in table.iter() { if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoint, bytes, &cipher_out); } }
+                                    // BUCLE DE REPETICIÓN (Para todas las IP virtuales)
+                                    for (vip, endpoints) in table.iter() { 
+                                        if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoints, bytes, &cipher_out); } 
+                                    }
                                 } else { 
-                                    if let Some(endpoint) = table.get(&dest_ip) { enviar_paquete_smart(&socket_out, &dest_ip, endpoint, bytes, &cipher_out); } 
-                                    else { for (vip, endpoint) in table.iter() { if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoint, bytes, &cipher_out); } } } 
+                                    // UNICAST
+                                    if let Some(endpoints) = table.get(&dest_ip) { enviar_paquete_smart(&socket_out, &dest_ip, endpoints, bytes, &cipher_out); } 
+                                    else { for (vip, endpoints) in table.iter() { if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoints, bytes, &cipher_out); } } } 
                                 }
                                 if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
@@ -423,7 +403,7 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     thread::spawn(move || {
         loop {
             thread::sleep(Duration::from_secs(2));
-            if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for t in table.values() { enviar_paquete_turbo(&socket_latido, t, HEARTBEAT_MSG, &cipher_latido); } } }
+            if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for endpoints in table.values() { for ep in endpoints { enviar_paquete_turbo(&socket_latido, ep, HEARTBEAT_MSG, &cipher_latido); } } } }
         }
     });
     "VPN BLINDADA ACTIVA".to_string()
