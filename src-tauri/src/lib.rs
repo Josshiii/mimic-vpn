@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Listener, Manager}; 
 use std::os::windows::process::CommandExt;
-use std::collections::HashMap; 
+use std::collections::{HashMap, HashSet}; // HashSet para evitar duplicados
 use std::fs::File; 
 use std::io::{Read, Write, Cursor}; 
 use std::path::{Path, PathBuf};
@@ -33,8 +33,8 @@ const FILE_PORT: u16 = 4444;
 const STUN_SERVER: &str = "stun.l.google.com:19302";
 const DISCORD_CLIENT_ID: &str = "1219918880000000000"; 
 
-// --- CAMBIO CRÍTICO: La tabla ahora guarda una LISTA de direcciones (Vec<String>) ---
-static ROUTING_TABLE: Mutex<Option<HashMap<String, Vec<String>>>> = Mutex::new(None);
+// --- TABLA DE RUTAS MULTIPATH (IP Virtual -> Lista de IPs Reales Únicas) ---
+static ROUTING_TABLE: Mutex<Option<HashMap<String, HashSet<String>>>> = Mutex::new(None);
 
 static GLOBAL_SOCKET: Mutex<Option<UdpSocket>> = Mutex::new(None);
 static DISCORD_CLIENT: Mutex<Option<DiscordIpcClient>> = Mutex::new(None);
@@ -53,9 +53,8 @@ fn es_paquete_seguro(packet: &[u8]) -> bool {
     true
 }
 
-// --- ENGINE ESCOPETA (MULTIPATH) ---
-// Envía el paquete a TODAS las direcciones conocidas del usuario (LAN y WAN)
-fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, rutas_destino: &Vec<String>, datos: &[u8], cipher: &ChaCha20Poly1305) {
+// --- ENGINE DE ENVÍO "ESCOPETA" ---
+fn enviar_paquete_multipath(socket: &UdpSocket, rutas_destino: &HashSet<String>, datos: &[u8], cipher: &ChaCha20Poly1305) {
     let compressed_data = compress_prepend_size(datos);
     let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
     
@@ -63,39 +62,14 @@ fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, rutas_dest
         let mut final_packet = nonce_bytes.to_vec(); 
         final_packet.extend_from_slice(&encrypted_msg);
         
-        let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
-        
-        // 1. ESTRATEGIA ESCOPETA: Disparar a todas las rutas conocidas (LAN + WAN)
-        let mut enviado_p2p = false;
+        // Disparar a TODAS las IPs conocidas de ese usuario
         for endpoint in rutas_destino {
-            if let Ok(_) = socket.send_to(&final_packet, endpoint) {
-                enviado_p2p = true;
-            }
-        }
-
-        // 2. FALLBACK RELAY (Por si acaso, aunque en Render falle)
-        if !enviado_p2p && relay_target.is_some() {
-            let relay_ip = relay_target.unwrap();
-            if let Ok(ip_addr) = ip_virtual_destino.parse::<Ipv4Addr>() {
-                let mut relay_packet = ip_addr.octets().to_vec(); 
-                relay_packet.extend_from_slice(&final_packet);    
-                let _ = socket.send_to(&relay_packet, relay_ip);
-            }
+            let _ = socket.send_to(&final_packet, endpoint);
         }
     }
 }
 
-// Helper para Heartbeat (Escopeta también)
-fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher: &ChaCha20Poly1305) {
-    let compressed_data = compress_prepend_size(datos);
-    let mut nonce_bytes = [0u8; 12]; rand::thread_rng().fill_bytes(&mut nonce_bytes); let nonce = Nonce::from_slice(&nonce_bytes);
-    if let Ok(encrypted_msg) = cipher.encrypt(nonce, compressed_data.as_ref()) {
-        let mut final_packet = nonce_bytes.to_vec(); final_packet.extend_from_slice(&encrypted_msg);
-        let _ = socket.send_to(&final_packet, destino);
-    }
-}
-
-// ... (Resto de funciones utilitarias IGUALES) ...
+// --- UTILIDADES ---
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -117,12 +91,19 @@ fn actualizar_discord(estado: &str, detalles: &str) {
 }
 
 fn optimizar_windows_nuclear(puerto_udp: &str) { 
+    // 1. Desbloqueo Defender
     let _ = Command::new("powershell").args(&["-Command", "Add-MpPreference -ExclusionProcess 'mimic-app.exe' -ErrorAction SilentlyContinue"]).creation_flags(CREATE_NO_WINDOW).output();
+    // 2. MTU Seguro
     let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
+    // 3. Perfil Privado
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    // 4. Métrica 1
     let _ = Command::new("powershell").args(&["-Command", &format!("Get-NetAdapter -Name '{}' | Set-NetIPInterface -InterfaceMetric 1", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
+    // 5. Firewall Permisivo Total
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Core-In\"", "dir=in", "action=allow", "protocol=UDP", "localport=any", "remoteport=any"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Core-Out\"", "dir=out", "action=allow", "protocol=UDP", "localport=any", "remoteport=any"]).creation_flags(CREATE_NO_WINDOW).output();
+    
+    // 6. Multicast
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
 }
@@ -296,22 +277,27 @@ fn intentar_upnp(puerto_interno: u16) -> String {
     }
 }
 
-// --- FIX DE CONEXIÓN: AGREGAR PEER SIN SOBREESCRIBIR ---
+// --- CORE FIX: AGREGAR PEER SIN PISAR DATOS ---
 #[tauri::command]
 fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
     if let Ok(mut guard) = ROUTING_TABLE.lock() { 
         if let Some(table) = guard.as_mut() { 
-            // 1. SI LA IP NO EXISTE, CREAR LISTA. SI EXISTE, AÑADIR.
-            // Esto evita que la IP Local borre a la Pública.
-            table.entry(ip_virtual).or_insert(Vec::new()).push(ip_destino.clone());
+            // GUARDAR TODAS LAS IPS (Local y Pública)
+            table.entry(ip_virtual).or_insert(HashSet::new()).insert(ip_destino.clone());
             
             if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
                 if let Some(socket) = socket_guard.as_ref() {
                     let target = ip_destino.clone(); let s_clone = socket.try_clone().unwrap();
-                    // 2. PERFORADORA INDUSTRIAL (Ráfaga para romper NAT)
+                    
+                    // PERFORACIÓN INFINITA: Intentar conectar siempre
                     thread::spawn(move || {
-                        for _ in 0..20 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(50)); }
-                        for _ in 0..10 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(500)); }
+                        // Ráfaga inicial
+                        for _ in 0..10 { let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); thread::sleep(Duration::from_millis(50)); }
+                        // Mantenimiento sostenido (Hole Punching cada 1s)
+                        for _ in 0..60 { // Durante 1 minuto intentamos conectar agresivamente
+                            let _ = s_clone.send_to(HOLE_PUNCH_MSG, &target); 
+                            thread::sleep(Duration::from_secs(1)); 
+                        }
                     });
                 }
             }
@@ -326,23 +312,14 @@ fn generar_clave_segura() -> String {
 }
 #[tauri::command]
 fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
-    if let Ok(mut guard) = RELAY_ADDRESS.lock() { *guard = Some(server_ip.clone()); }
-    if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
-        if let Some(socket) = socket_guard.as_ref() {
-            let s_clone = socket.try_clone().unwrap(); let target = server_ip.clone();
-            if let Ok(ip_addr) = mi_ip_virtual.parse::<Ipv4Addr>() {
-                let mut reg_packet = vec![0xFF]; reg_packet.extend_from_slice(&ip_addr.octets());
-                thread::spawn(move || { loop { let _ = s_clone.send_to(&reg_packet, &target); thread::sleep(Duration::from_secs(5)); if RELAY_ADDRESS.lock().unwrap().is_none() { break; } } });
-            }
-        }
-    }
-    "MODO RELAY ACTIVADO 🛡️".to_string()
+    // DESACTIVADO PORQUE RENDER NO SOPORTA UDP
+    "Relay no disponible en servidor gratuito".to_string()
 }
 
 #[tauri::command]
 fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_handle: tauri::AppHandle) -> String {
     inicializar_tabla(); 
-    actualizar_discord("Conectado a Mimic Hub", "Modo Universal 🌍"); 
+    actualizar_discord("Conectado a Mimic Hub", "Modo P2P Puro 🌍"); 
     let key_bytes = match general_purpose::STANDARD.decode(&clave_b64) { Ok(k) => k, Err(_) => return "Clave mal".to_string() };
     if key_bytes.len() != 32 { return "Longitud mal".to_string(); }
     let key = Key::from_slice(&key_bytes); let cipher = Arc::new(ChaCha20Poly1305::new(key));
@@ -351,8 +328,6 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let session = adapter.start_session(0x400000).unwrap();
     let _ = Command::new("netsh").args(&["interface", "ip", "set", "address", &format!("name=\"{}\"", NOMBRE_ADAPTADOR), "static", &ip_virtual, TUNEL_MASK]).creation_flags(CREATE_NO_WINDOW).output();
     optimizar_windows_nuclear(&puerto_local);
-    
-    // UPnP AUTOMÁTICO (CRÍTICO PARA RENDER)
     if let Ok(p) = puerto_local.parse::<u16>() { thread::spawn(move || { let _ = intentar_upnp(p); }); }
 
     iniciar_receptor_archivos(app_handle.clone());
@@ -378,14 +353,12 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
                         if let Ok(guard) = ROUTING_TABLE.lock() {
                             if let Some(table) = guard.as_ref() {
                                 if is_broadcast || is_multicast { 
-                                    // BUCLE DE REPETICIÓN (Para todas las IP virtuales)
                                     for (vip, endpoints) in table.iter() { 
-                                        if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoints, bytes, &cipher_out); } 
+                                        if *vip != ip_virtual { enviar_paquete_multipath(&socket_out, endpoints, bytes, &cipher_out); } 
                                     }
                                 } else { 
-                                    // UNICAST
-                                    if let Some(endpoints) = table.get(&dest_ip) { enviar_paquete_smart(&socket_out, &dest_ip, endpoints, bytes, &cipher_out); } 
-                                    else { for (vip, endpoints) in table.iter() { if *vip != ip_virtual { enviar_paquete_smart(&socket_out, vip, endpoints, bytes, &cipher_out); } } } 
+                                    if let Some(endpoints) = table.get(&dest_ip) { enviar_paquete_multipath(&socket_out, endpoints, bytes, &cipher_out); } 
+                                    else { for (vip, endpoints) in table.iter() { if *vip != ip_virtual { enviar_paquete_multipath(&socket_out, endpoints, bytes, &cipher_out); } } } 
                                 }
                                 if !table.is_empty() { let _ = app_out.emit("stats-salida", bytes.len()); }
                             }
@@ -398,8 +371,15 @@ fn iniciar_vpn(puerto_local: String, ip_virtual: String, clave_b64: String, app_
     let socket_latido = socket_local; let cipher_latido = cipher.clone();
     thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_secs(2));
-            if let Ok(guard) = ROUTING_TABLE.lock() { if let Some(table) = guard.as_ref() { for endpoints in table.values() { for ep in endpoints { enviar_paquete_turbo(&socket_latido, ep, HEARTBEAT_MSG, &cipher_latido); } } } }
+            thread::sleep(Duration::from_secs(1)); // Latido más rápido (1s)
+            if let Ok(guard) = ROUTING_TABLE.lock() { 
+                if let Some(table) = guard.as_ref() { 
+                    for endpoints in table.values() { 
+                        // Disparar latido a TODAS las rutas conocidas
+                        enviar_paquete_multipath(&socket_latido, endpoints, HEARTBEAT_MSG, &cipher_latido); 
+                    } 
+                } 
+            }
         }
     });
     "VPN BLINDADA ACTIVA".to_string()
