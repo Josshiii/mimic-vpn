@@ -62,11 +62,10 @@ fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, rutas_dest
         
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
         
-        // 1. Intentar Directo (P2P)
+        // 1. Intentar Directo (P2P) - Siempre intentamos primero el camino corto
         for endpoint in rutas_destino { let _ = socket.send_to(&final_packet, endpoint); }
 
         // 2. Intentar por RELAY (Si está activo)
-        // ESTA ES LA PARTE QUE FALTABA
         if let Some(relay_ip) = relay_target {
             if let Ok(ip_addr) = ip_virtual_destino.parse::<Ipv4Addr>() {
                 // Empaquetamos: [IP DESTINO (4 bytes)] + [DATOS ENCRIPTADOS]
@@ -87,7 +86,7 @@ fn enviar_paquete_turbo(socket: &UdpSocket, destino: &str, datos: &[u8], cipher:
     }
 }
 
-// ... (Utilidades: Discord, Optimización, etc. IGUALES) ...
+// ... (Utilidades) ...
 fn conectar_discord() {
     let mut guard = DISCORD_CLIENT.lock().unwrap();
     if guard.is_none() {
@@ -105,7 +104,9 @@ fn optimizar_windows_nuclear(puerto_udp: &str) {
     let _ = Command::new("netsh").args(&["interface", "ipv4", "set", "subinterface", NOMBRE_ADAPTADOR, "mtu=1350", "store=persistent"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("powershell").args(&["-Command", &format!("Set-NetConnectionProfile -InterfaceAlias '{}' -NetworkCategory Private", NOMBRE_ADAPTADOR)]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Core-In\"", "dir=in", "action=allow", "protocol=UDP", "localport=any", "remoteport=any"]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["advfirewall", "firewall", "add", "rule", "name=\"MimicHub-Core-Out\"", "dir=out", "action=allow", "protocol=UDP", "localport=any", "remoteport=any"]).creation_flags(CREATE_NO_WINDOW).output();
     let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "224.0.0.0/4", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
+    let _ = Command::new("netsh").args(&["interface", "ip", "add", "route", "255.255.255.255/32", NOMBRE_ADAPTADOR, "metric=1"]).creation_flags(CREATE_NO_WINDOW).output();
 }
 #[tauri::command]
 fn forzar_prioridad() -> String { optimizar_windows_nuclear("0"); "🚀 Prioridad Forzada".to_string() }
@@ -125,7 +126,7 @@ fn parse_stun_response(response: &[u8]) -> Option<(String, u16)> {
     while let Ok(attr_type) = cursor.read_u16::<BigEndian>() {
         let attr_len = cursor.read_u16::<BigEndian>().unwrap_or(0);
         if attr_type == 0x0020 {
-            let _ = cursor.read_u16::<BigEndian>(); // family & port placeholder
+            let _ = cursor.read_u16::<BigEndian>(); 
             let xor_port = cursor.read_u16::<BigEndian>().unwrap_or(0);
             let xor_ip = cursor.read_u32::<BigEndian>().unwrap_or(0);
             return Some((Ipv4Addr::from(xor_ip ^ 0x2112A442).to_string(), xor_port ^ 0x2112));
@@ -251,36 +252,42 @@ fn agregar_peer(ip_destino: String, ip_virtual: String) -> String {
 #[tauri::command]
 fn generar_clave_segura() -> String { let mut k=[0u8;32]; rand::thread_rng().fill_bytes(&mut k); general_purpose::STANDARD.encode(k) }
 
-// --- ACTIVACIÓN DEL RELAY (AHORA SÍ FUNCIONA) ---
+// --- ACTIVACIÓN DEL RELAY (VERSIÓN CORREGIDA Y ROBUSTA) ---
 #[tauri::command]
 fn activar_relay(server_ip: String, mi_ip_virtual: String) -> String {
-    // 1. Guardar la dirección del Relay
+    // 1. Guardar la dirección del Relay para que el engine de envío la use
     if let Ok(mut guard) = RELAY_ADDRESS.lock() { *guard = Some(server_ip.clone()); }
     
-    // 2. Iniciar el "KeepAlive" (Latido constante)
-    if let Ok(socket_guard) = GLOBAL_SOCKET.lock() {
-        if let Some(socket) = socket_guard.as_ref() {
-            let s_clone = socket.try_clone().unwrap(); 
-            let target = server_ip.clone();
-            
+    // 2. Iniciar el hilo de KeepAlive con un socket DEDICADO
+    // (Ya no intentamos clonar el socket global bloqueado, creamos uno nuevo efímero)
+    thread::spawn(move || {
+        let target = server_ip.clone();
+        
+        // Creamos un socket efímero solo para enviar el registro
+        // Al usar "0.0.0.0:0", el SO asigna un puerto libre aleatorio.
+        // Esto es seguro porque Playit/NodeJS lee la IP/Puerto origen del paquete entrante.
+        if let Ok(socket_temp) = UdpSocket::bind("0.0.0.0:0") {
             if let Ok(ip_addr) = mi_ip_virtual.parse::<Ipv4Addr>() {
                 // Paquete de Registro: [0xFF] + [IP VIRTUAL (4 bytes)]
                 let mut reg_packet = vec![0xFF]; 
                 reg_packet.extend_from_slice(&ip_addr.octets());
                 
-                thread::spawn(move || { 
-                    loop { 
-                        // Enviar registro cada 5 segundos para que Playit no cierre el túnel
-                        let _ = s_clone.send_to(&reg_packet, &target); 
-                        thread::sleep(Duration::from_secs(5)); 
-                        
-                        // Si el usuario desactiva el relay, paramos
-                        if RELAY_ADDRESS.lock().unwrap().is_none() { break; } 
-                    } 
-                });
+                loop { 
+                    // Enviar registro
+                    let _ = socket_temp.send_to(&reg_packet, &target); 
+                    
+                    // Esperar 5 segundos
+                    thread::sleep(Duration::from_secs(5)); 
+                    
+                    // Verificar si debemos parar (si el usuario desactivó el relay)
+                    if let Ok(guard) = RELAY_ADDRESS.lock() {
+                        if guard.is_none() { break; }
+                    }
+                } 
             }
         }
-    }
+    });
+
     "Conectado a Playit Relay 🚀".to_string()
 }
 
