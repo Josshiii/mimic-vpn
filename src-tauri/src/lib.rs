@@ -66,16 +66,14 @@ fn enviar_paquete_smart(socket: &UdpSocket, ip_virtual_destino: &str, rutas_dest
         let relay_target = { let guard = RELAY_ADDRESS.lock().unwrap(); guard.clone() };
         
         // 1. ESTRATEGIA ESCOPETA: Disparar a todas las rutas conocidas (LAN + WAN)
-        // Esto garantiza que si una falla, la otra llegue.
         let mut enviado_p2p = false;
-        
         for endpoint in rutas_destino {
             if let Ok(_) = socket.send_to(&final_packet, endpoint) {
                 enviado_p2p = true;
             }
         }
 
-        // 2. FALLBACK RELAY (Solo si no pudimos enviar nada P2P, aunque con Render esto no funciona)
+        // 2. FALLBACK RELAY (Por si acaso, aunque en Render falle)
         if !enviado_p2p && relay_target.is_some() {
             let relay_ip = relay_target.unwrap();
             if let Ok(ip_addr) = ip_virtual_destino.parse::<Ipv4Addr>() {
@@ -233,7 +231,6 @@ fn iniciar_receptor_archivos<R: tauri::Runtime>(app_handle: tauri::AppHandle<R>)
         }
     });
 }
-
 fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket: UdpSocket, cipher: Arc<ChaCha20Poly1305>, app_handle: tauri::AppHandle<R>) {
     thread::spawn(move || {
         let mut buffer = [0; 65535]; 
@@ -265,7 +262,6 @@ fn iniciar_hilo_entrada<R: tauri::Runtime>(session: Arc<wintun::Session>, socket
         }
     });
 }
-
 fn obtener_ip_local() -> Option<Ipv4Addr> { let socket = UdpSocket::bind("0.0.0.0:0").ok()?; socket.connect("8.8.8.8:80").ok()?; if let Ok(SocketAddr::V4(addr)) = socket.local_addr() { return Some(*addr.ip()); } None }
 #[tauri::command]
 fn obtener_ip_local_cmd() -> String { match obtener_ip_local() { Some(ip) => ip.to_string(), None => "127.0.0.1".to_string() } }
